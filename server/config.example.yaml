@@ -28,17 +28,25 @@ share:
 trash:
   retention_days: 30
 
+logging:
+  level: INFO
+  filename: mindshelf.log
+  console: true
+  max_bytes: 5242880   # 5 MB
+  backup_count: 3
+
 search:
   enabled: true
   # provider: uapi | duckduckgo | ddg_api
   provider: uapi
   api_key: "your-uapi-key"
   api_url: "https://uapis.cn/api/v1/search/aggregate"
-  max_results: 5
-  fetch_pages: false     # uapi 下对应 fetch_full；true 更准但更慢
+  max_results: 8
+  fetch_pages: true        # 搜索后本地抓取链接正文（UAPI 仅返回摘要）
   sort: relevance        # relevance | date
   # time_range: week     # 可选 day | week | month | year
-  max_fetch_pages: 2     # duckduckgo 抓取网页时使用
+  max_fetch_pages: 5     # 每条搜索最多抓取几个 URL
+  min_content_chars: 200   # 已有正文字数超过此值则跳过抓取
   page_max_chars: 2500
   search_timeout: 30
   page_timeout: 8

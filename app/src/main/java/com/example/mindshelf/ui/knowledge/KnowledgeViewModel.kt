@@ -6,6 +6,7 @@ import com.example.mindshelf.data.remote.dto.KnowledgeBaseDto
 import com.example.mindshelf.data.remote.dto.NoteDto
 import com.example.mindshelf.data.repository.KnowledgeRepository
 import com.example.mindshelf.data.repository.NoteRepository
+import com.example.mindshelf.data.repository.ShareRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,6 +20,7 @@ import javax.inject.Inject
 class KnowledgeViewModel @Inject constructor(
     private val repository: KnowledgeRepository,
     private val noteRepository: NoteRepository,
+    private val shareRepository: ShareRepository,
 ) : ViewModel() {
 
     val items: StateFlow<List<KnowledgeBaseDto>> = repository.observeKnowledgeBases()
@@ -57,4 +59,6 @@ class KnowledgeViewModel @Inject constructor(
             _kbNotes.value = noteRepository.getNotesForKb(kbId)
         }
     }
+
+    suspend fun createShareLink(kbId: String) = shareRepository.createLink("knowledge_base", kbId)
 }

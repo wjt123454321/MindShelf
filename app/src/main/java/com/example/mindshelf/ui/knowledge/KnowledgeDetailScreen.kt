@@ -36,7 +36,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.data.remote.dto.NoteDto
 import com.example.mindshelf.ui.components.EmptyState
 import com.example.mindshelf.ui.components.MindShelfTopAppBar
+import com.example.mindshelf.ui.components.ShareLinkDialog
 import androidx.compose.material.icons.filled.Note
+import androidx.compose.material.icons.filled.Share
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +56,7 @@ fun KnowledgeDetailScreen(
     val displayDescription = kb?.description.orEmpty()
 
     var showEditDialog by remember { mutableStateOf(false) }
+    var showShare by remember { mutableStateOf(false) }
     var editName by remember { mutableStateOf("") }
     var editDescription by remember { mutableStateOf("") }
 
@@ -99,6 +102,13 @@ fun KnowledgeDetailScreen(
         )
     }
 
+    if (showShare) {
+        ShareLinkDialog(
+            onRequestLink = { viewModel.createShareLink(kbId) },
+            onDismiss = { showShare = false },
+        )
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -122,6 +132,9 @@ fun KnowledgeDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showShare = true }) {
+                        Icon(Icons.Default.Share, contentDescription = "分享")
+                    }
                     IconButton(
                         onClick = {
                             editName = displayName

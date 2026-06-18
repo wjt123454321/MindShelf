@@ -19,3 +19,10 @@ config.txt
 config.yaml
 server/config.yaml
 server/data/
+server/logs/
+
+# JVM / Gradle 崩溃诊断（非应用日志）
+logs/*
+!logs/.gitkeep
+hs_err_pid*.log
+replay_pid*.log

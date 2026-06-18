@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import com.example.mindshelf.data.repository.ContentSyncRepository
+import com.example.mindshelf.data.sync.SyncCoordinator
 import com.example.mindshelf.di.ApplicationScope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +20,7 @@ import javax.inject.Singleton
 class NetworkContentSyncObserver @Inject constructor(
     @ApplicationContext private val context: Context,
     private val contentSyncRepository: ContentSyncRepository,
+    private val syncCoordinator: SyncCoordinator,
     @ApplicationScope private val scope: CoroutineScope,
 ) {
     private val connectivityManager =
@@ -56,6 +58,7 @@ class NetworkContentSyncObserver @Inject constructor(
         scope.launch {
             syncMutex.withLock {
                 runCatching { contentSyncRepository.syncAllPending() }
+                runCatching { syncCoordinator.syncAll() }
             }
         }
     }

@@ -3,7 +3,6 @@ package com.example.mindshelf.data.remote
 import com.example.mindshelf.data.remote.dto.ApiResponse
 import com.example.mindshelf.data.remote.dto.AuthResultDto
 import com.example.mindshelf.data.remote.dto.BranchDto
-import com.example.mindshelf.data.remote.dto.ChatStreamRequest
 import com.example.mindshelf.data.remote.dto.ConversationDto
 import com.example.mindshelf.data.remote.dto.CreateBranchRequest
 import com.example.mindshelf.data.remote.dto.CreateConversationRequest
@@ -18,22 +17,25 @@ import com.example.mindshelf.data.remote.dto.RefreshRequest
 import com.example.mindshelf.data.remote.dto.RegisterRequest
 import com.example.mindshelf.data.remote.dto.SendCodeRequest
 import com.example.mindshelf.data.remote.dto.TokenRefreshResultDto
-import com.example.mindshelf.data.remote.dto.ToolConfirmRequest
-import com.example.mindshelf.data.remote.dto.ToolConfirmResultDto
-import com.example.mindshelf.data.remote.dto.ToolResumeRequest
-import com.example.mindshelf.data.remote.dto.PendingToolDto
 import com.example.mindshelf.data.remote.dto.UpdateKbRequest
+import com.example.mindshelf.data.remote.dto.CreateShareLinkRequest
+import com.example.mindshelf.data.remote.dto.NoteVersionDto
+import com.example.mindshelf.data.remote.dto.ShareLinkDto
+import com.example.mindshelf.data.remote.dto.SyncPullData
+import com.example.mindshelf.data.remote.dto.SyncPushRequest
+import com.example.mindshelf.data.remote.dto.SyncPushResult
+import com.example.mindshelf.data.remote.dto.SyncResolveRequest
+import com.example.mindshelf.data.remote.dto.TrashItemDto
+import com.example.mindshelf.data.remote.dto.TrashRestoreRequest
 import com.example.mindshelf.data.remote.dto.UpdateNoteRequest
 import com.example.mindshelf.data.remote.dto.UserDto
-import okhttp3.ResponseBody
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
-import retrofit2.http.Header
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
-import retrofit2.http.Streaming
+import retrofit2.http.Query
 
 interface MindShelfApi {
     @POST("auth/register")
@@ -111,26 +113,51 @@ interface MindShelfApi {
         @Path("bid") branchId: String,
     ): ApiResponse<List<MessageDto>>
 
-    @Streaming
-    @POST("ai/chat/stream")
-    suspend fun chatStream(
-        @Header("Accept") accept: String = "text/event-stream",
-        @Body body: ChatStreamRequest,
-    ): ResponseBody
+    @POST("ai/search")
+    suspend fun webSearch(@Body body: Map<String, String>): ApiResponse<Map<String, Any?>>
 
-    @POST("ai/tools/confirm")
-    suspend fun confirmTool(@Body body: ToolConfirmRequest): ApiResponse<ToolConfirmResultDto>
+    @GET("notes/{id}/versions")
+    suspend fun listNoteVersions(@Path("id") noteId: String): ApiResponse<List<NoteVersionDto>>
 
-    @GET("ai/tools/pending")
-    suspend fun listPendingTools(
-        @retrofit2.http.Query("conversation_id") conversationId: String,
-        @retrofit2.http.Query("branch_id") branchId: String? = null,
-    ): ApiResponse<List<PendingToolDto>>
+    @GET("notes/{noteId}/versions/{versionId}")
+    suspend fun getNoteVersion(
+        @Path("noteId") noteId: String,
+        @Path("versionId") versionId: String,
+    ): ApiResponse<NoteVersionDto>
 
-    @Streaming
-    @POST("ai/tools/resume/stream")
-    suspend fun resumeToolStream(
-        @Header("Accept") accept: String = "text/event-stream",
-        @Body body: ToolResumeRequest,
-    ): ResponseBody
+    @POST("notes/{noteId}/versions/{versionId}/restore")
+    suspend fun restoreNoteVersion(
+        @Path("noteId") noteId: String,
+        @Path("versionId") versionId: String,
+    ): ApiResponse<NoteDto>
+
+    @GET("trash")
+    suspend fun listTrash(): ApiResponse<List<TrashItemDto>>
+
+    @POST("trash/restore")
+    suspend fun restoreTrash(@Body body: TrashRestoreRequest): ApiResponse<Any>
+
+    @DELETE("trash/{entityType}/{id}")
+    suspend fun purgeTrash(
+        @Path("entityType") entityType: String,
+        @Path("id") id: String,
+    )
+
+    @POST("share/links")
+    suspend fun createShareLink(@Body body: CreateShareLinkRequest): ApiResponse<ShareLinkDto>
+
+    @GET("share/links")
+    suspend fun listShareLinks(): ApiResponse<List<ShareLinkDto>>
+
+    @DELETE("share/links/{linkId}")
+    suspend fun revokeShareLink(@Path("linkId") linkId: String)
+
+    @GET("sync/pull")
+    suspend fun syncPull(@Query("since") since: Long? = null): ApiResponse<SyncPullData>
+
+    @POST("sync/push")
+    suspend fun syncPush(@Body body: SyncPushRequest): ApiResponse<SyncPushResult>
+
+    @POST("sync/resolve")
+    suspend fun syncResolve(@Body body: SyncResolveRequest): ApiResponse<Any>
 }

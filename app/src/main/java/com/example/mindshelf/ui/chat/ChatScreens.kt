@@ -52,6 +52,7 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -65,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.R
 import com.example.mindshelf.data.remote.dto.ConversationDto
@@ -134,6 +136,8 @@ fun ChatScreen(
     var showedOfflineHint by rememberSaveable { mutableStateOf(false) }
     var wasStreaming by remember { mutableStateOf(false) }
     var stickToBottom by remember { mutableStateOf(true) }
+    var scrollToBottomNonce by remember { mutableIntStateOf(0) }
+    var autoScrolling by remember { mutableStateOf(false) }
     var branchMenuExpanded by remember { mutableStateOf(false) }
     var editingMessage by remember { mutableStateOf<MessageDto?>(null) }
     var editText by remember { mutableStateOf("") }
@@ -294,8 +298,26 @@ fun ChatScreen(
         wasStreaming = streaming
     }
 
-    LaunchedEffect(activeChatId) {
+    LaunchedEffect(activeChatId, activeBranchId) {
         stickToBottom = true
+        scrollToBottomNonce++
+    }
+
+    LaunchedEffect(initializing) {
+        if (!initializing && timeline.isNotEmpty()) {
+            stickToBottom = true
+            scrollToBottomNonce++
+        }
+    }
+
+    LifecycleResumeEffect(activeChatId, activeBranchId) {
+        stickToBottom = true
+        scrollToBottomNonce++
+        onPauseOrDispose { }
+    }
+
+    LaunchedEffect(streaming) {
+        if (streaming) stickToBottom = true
     }
 
     LaunchedEffect(listState) {
@@ -303,24 +325,45 @@ fun ChatScreen(
             .collect { (scrolling, atBottom) ->
                 if (atBottom) {
                     stickToBottom = true
-                } else if (scrolling) {
+                } else if (scrolling && !autoScrolling) {
                     stickToBottom = false
                 }
             }
     }
 
-    LaunchedEffect(listState, stickToBottom, timeline.size, streaming) {
-        if (!stickToBottom || timeline.isEmpty()) return@LaunchedEffect
-        snapshotFlow {
-            val last = timeline.lastOrNull()
-            val lastMsg = (last as? ChatTimelineItem.Message)?.message
-            Triple(
-                timeline.size,
-                last?.key,
-                lastMsg?.content?.length ?: 0,
+    LaunchedEffect(
+        scrollToBottomNonce,
+        listState,
+        streaming,
+        streamStatusHint,
+        reasoningStreaming,
+        timeline.size,
+        initializing,
+    ) {
+        if (initializing || !stickToBottom || timeline.isEmpty()) return@LaunchedEffect
+        autoScrolling = true
+        try {
+            listState.awaitScrollToBottom(
+                expectedItemCount = timeline.size,
+                animated = !streaming,
             )
-        }.collect {
-            listState.scrollToBottom()
+            snapshotFlow {
+                val last = timeline.lastOrNull()
+                val lastMsg = (last as? ChatTimelineItem.Message)?.message
+                listOf(
+                    timeline.size,
+                    last?.key,
+                    lastMsg?.streamingPayloadLength() ?: 0,
+                    streamStatusHint,
+                    reasoningStreaming,
+                )
+            }.collect {
+                if (stickToBottom) {
+                    listState.scrollToBottom(animated = !streaming)
+                }
+            }
+        } finally {
+            autoScrolling = false
         }
     }
 

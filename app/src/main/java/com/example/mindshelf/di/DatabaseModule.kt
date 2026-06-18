@@ -85,6 +85,20 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE conversations ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'SYNCED'",
+            )
+            db.execSQL(
+                "ALTER TABLE branches ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'SYNCED'",
+            )
+            db.execSQL(
+                "ALTER TABLE messages ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'SYNCED'",
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): MindShelfDatabase =
@@ -96,6 +110,7 @@ object DatabaseModule {
                 MIGRATION_4_5,
                 MIGRATION_5_6,
                 MIGRATION_6_7,
+                MIGRATION_7_8,
             )
             .build()
 

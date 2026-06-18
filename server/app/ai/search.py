@@ -33,7 +33,12 @@ def _fetch_pages_enabled() -> bool:
 
 
 def _max_fetch_pages() -> int:
-    return int(_search_cfg().get("max_fetch_pages", 2))
+    return int(_search_cfg().get("max_fetch_pages", 5))
+
+
+def _min_content_chars() -> int:
+    """已有正文字数达到该阈值则不再重复抓取。"""
+    return int(_search_cfg().get("min_content_chars", 200))
 
 
 def _page_max_chars() -> int:
@@ -126,9 +131,10 @@ def _search_uapi(
         return []
 
     url = cfg.get("api_url", "https://uapis.cn/api/v1/search/aggregate")
+    # UAPI 仅作聚合搜索；正文统一由本服务 fetch_page 抓取
     payload: dict = {
         "query": query,
-        "fetch_full": _fetch_pages_enabled(),
+        "fetch_full": False,
     }
     effective_sort = sort or cfg.get("sort")
     if effective_sort:
@@ -159,17 +165,13 @@ def _search_uapi(
         link = (item.get("url") or "").strip()
         if not title or not link:
             continue
-        row: dict = {
-            "title": title,
-            "url": link,
-            "snippet": (item.get("snippet") or "").strip(),
-        }
-        for content_key in ("content", "full_content", "body", "text"):
-            body = item.get(content_key)
-            if isinstance(body, str) and body.strip():
-                row["content"] = body.strip()[: _page_max_chars()]
-                break
-        results.append(row)
+        results.append(
+            {
+                "title": title,
+                "url": link,
+                "snippet": (item.get("snippet") or "").strip(),
+            }
+        )
     return results
 
 
@@ -379,23 +381,44 @@ def build_search_context(
     return "\n".join(lines).strip()
 
 
+def _urls_needing_fetch(results: list[dict]) -> list[str]:
+    """从搜索结果中挑选需本地抓正文的 URL。"""
+    min_chars = _min_content_chars()
+    cap = _max_fetch_pages()
+    urls: list[str] = []
+    for item in results:
+        if len(urls) >= cap:
+            break
+        url = (item.get("url") or "").strip()
+        if not url:
+            continue
+        existing = (item.get("content") or "").strip()
+        if len(existing) >= min_chars:
+            continue
+        urls.append(url)
+    return urls
+
+
+def _fetch_pages_for_results(results: list[dict]) -> list[tuple[str, str]]:
+    """并行抓取搜索结果链接正文。"""
+    if not _fetch_pages_enabled() or not results:
+        return []
+    urls = _urls_needing_fetch(results)
+    if not urls:
+        return []
+    return _fetch_pages_parallel(urls)
+
+
 def gather_search_context(
     query: str,
     *,
+    max_results: int | None = None,
     sort: str | None = None,
     time_range: str | None = None,
 ) -> tuple[list[dict], str]:
-    """执行搜索、可选并行抓取网页，返回 (results, context)。"""
-    results = web_search(query, sort=sort, time_range=time_range)
-    page_contents: list[tuple[str, str]] = []
-    if _fetch_pages_enabled() and results:
-        urls = [
-            item.get("url") or ""
-            for item in results[: _max_fetch_pages()]
-            if item.get("url") and not item.get("content")
-        ]
-        if urls:
-            page_contents = _fetch_pages_parallel(urls)
+    """执行搜索，并在本地抓取网页正文，返回 (results, context)。"""
+    results = web_search(query, max_results=max_results, sort=sort, time_range=time_range)
+    page_contents = _fetch_pages_for_results(results)
     enriched = enrich_results_with_content(results, page_contents)
     context = build_search_context(query, enriched, page_contents)
     return enriched, context

@@ -40,9 +40,11 @@ import com.example.mindshelf.ui.chat.ChatScreen
 import com.example.mindshelf.ui.knowledge.KnowledgeDetailScreen
 import com.example.mindshelf.ui.knowledge.KnowledgeScreen
 import com.example.mindshelf.ui.notes.NoteEditScreen
+import com.example.mindshelf.ui.notes.NoteVersionsScreen
 import com.example.mindshelf.ui.notes.NotesScreen
 import com.example.mindshelf.ui.profile.ProfileScreen
 import com.example.mindshelf.ui.settings.AiSettingsScreen
+import com.example.mindshelf.ui.trash.TrashScreen
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -223,6 +225,19 @@ fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
                     NoteEditScreen(
                         noteId = if (noteId == "new") null else noteId,
                         onBack = { navController.popBackStack() },
+                        onOpenVersions = { id ->
+                            navController.navigate("note_versions/$id")
+                        },
+                    )
+                }
+                composable(
+                    "note_versions/{noteId}",
+                    arguments = listOf(navArgument("noteId") { type = NavType.StringType }),
+                ) { entry ->
+                    val id = entry.arguments?.getString("noteId")!!
+                    NoteVersionsScreen(
+                        noteId = id,
+                        onBack = { navController.popBackStack() },
                     )
                 }
                 composable("profile") {
@@ -233,7 +248,11 @@ fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
                             }
                         },
                         onOpenAiSettings = { navController.navigate("ai_settings") },
+                        onOpenTrash = { navController.navigate("trash") },
                     )
+                }
+                composable("trash") {
+                    TrashScreen(onBack = { navController.popBackStack() })
                 }
                 composable("ai_settings") {
                     AiSettingsScreen(onBack = { navController.popBackStack() })

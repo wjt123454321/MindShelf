@@ -189,25 +189,26 @@ com.example.mindshelf/
 
 **不同步实体**：`AiProvider`（自定义 API 配置，含 Key）。
 
-### 5.3 AI 双通道路由
+### 5.3 AI 路由与工具（统一客户端）
 
 ```mermaid
 flowchart LR
     ChatVM[ChatViewModel] --> Router[AiRouter]
-    Router -->|内置| Builtin[BuiltinAiClient]
-    Router -->|自定义| Custom[CustomAiClient]
-    Builtin --> ServerAPI[POST /ai/chat/stream]
-    Custom --> ThirdParty[第三方 Base URL]
-    Builtin --> ToolProxy[工具经服务端执行]
-    Custom --> ToolLocal[工具在客户端本地执行]
+    Router --> Loop[ToolLoopEngine]
+    Loop --> Disp[ClientToolDispatcher]
+    Disp --> Room[(Room)]
+    Loop -->|内置| Proxy[POST /ai/completions]
+    Loop -->|自定义| ThirdParty[第三方 Base URL]
+    Disp -->|web_search| SearchProxy[POST /ai/search]
+    Proxy --> LLM[内置 LLM]
 ```
 
-| 通道 | 工具调用执行位置 | 联网搜索 |
-|------|------------------|----------|
-| 内置 | 服务端（访问服务端 DB） | 服务端 |
-| 自定义 | 客户端（访问本地 DB；若已同步则与服务端一致） | Phase 2 可经服务端代理或客户端受限实现；优先内置路径 |
+| 通道 | LLM 传输 | 工具执行 | 联网搜索 |
+|------|----------|----------|----------|
+| 内置 | Flask JWT 代理 `/ai/completions` | 客户端 `ClientToolDispatcher` → Room | 服务端 `/ai/search` 代理 |
+| 自定义 | 客户端直连 OpenAI 兼容 API | 同上 | 同上（经服务端搜索代理，无需用户 Key） |
 
-用户切换提供方时，`AiRouter` 仅更换底层 Client，UI 与消息存储逻辑不变。
+内置与自定义 **共用** `ToolLoopEngine` + `ClientToolDispatcher`；写工具确认完全在客户端完成（`ToolActionEntity` + UI 卡片）。服务端不再执行 `mutate_*` 或维护 `PendingToolConfirmation`。
 
 ### 5.4 对话分支（客户端 + 服务端一致模型）
 
@@ -269,14 +270,14 @@ server/
 | `share.base_url` | 公开链接前缀 |
 | `trash.retention_days` | 默认 30 |
 
-### 6.3 AI 编排（内置路径）
+### 6.3 AI 代理（内置 LLM）
 
-1. 接收客户端消息历史（当前分支上下文）。
-2. 注入系统 Prompt（工具说明、知识库摘要策略）。
-3. 调用内置 AI API；若模型返回 `tool_calls`，在服务端 `dispatch`：
-   - 读工具：直接查 DB，结果回填模型。
-   - 写工具：记录 `pending_confirmation` 或根据策略需客户端确认后再执行（见 §8.3）。
-4. 流式 SSE 推送文本与工具状态事件。
+服务端 **不** 运行 tool loop，仅提供：
+
+1. **`POST /api/v1/ai/completions`** — OpenAI 兼容流式/非流式代理，注入 `ai.api_key`，JWT 鉴权。
+2. **`POST /api/v1/ai/search`** — 联网搜索代理，供客户端 `web_search` 工具调用。
+
+对话消息由客户端写入 Room，经 `SyncCoordinator` + `sync` API 上云（见 §10）。
 
 ### 6.4 公开分享
 
@@ -422,7 +423,7 @@ erDiagram
 | TOOL-04 | `mutate_note` | 创建 / 更新 / 删除笔记 |
 | TOOL-05 | `mutate_custom_page` | 创建 / 修改页面 schema |
 
-工具 schema 采用 OpenAI function calling 格式，服务端与客户端各维护一份一致定义（自定义 API 路径在客户端 dispatch）。
+工具 schema 采用 OpenAI function calling 格式，**以客户端 `ToolSchemas.kt` 为唯一执行定义**（`server/app/ai/tools.py` 中 `tool_schemas` 仅作文档参考）。读写均经 `ClientToolDispatcher` 访问本地 Room；云同步由 `SyncCoordinator` 负责。
 
 ### 8.2 联网与网页（NET-*）
 
@@ -466,7 +467,7 @@ erDiagram
 
 - 每条可同步实体含 `updated_at`（及 notes 的 `sync_version`）。
 - 客户端维护 `last_synced_at`  per user。
-- 同步分两步：**Pull**（服务端 Δ since last_sync）→ **Push**（客户端 queue）。
+- 同步分两步：**Pull**（服务端 Δ since last_sync）→ **Push**（客户端 pending，含 notes / knowledge_bases / conversations / branches / messages）。
 
 ### 10.2 三路合并（SYNC-03）
 

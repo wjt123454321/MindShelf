@@ -11,6 +11,7 @@ import com.example.mindshelf.data.remote.MindShelfApi
 import com.example.mindshelf.data.remote.dto.CreateNoteRequest
 import com.example.mindshelf.data.remote.dto.NoteDto
 import com.example.mindshelf.data.remote.dto.UpdateNoteRequest
+import com.example.mindshelf.data.sync.SyncCoordinator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import retrofit2.HttpException
@@ -23,6 +24,7 @@ class NoteRepository @Inject constructor(
     private val api: MindShelfApi,
     private val noteDao: NoteDao,
     private val noteKbDao: NoteKbDao,
+    private val syncCoordinator: SyncCoordinator,
 ) {
     fun observeNotes(): Flow<List<NoteDto>> =
         combine(noteDao.observeActive(), noteKbDao.observeAll()) { notes, links ->
@@ -32,24 +34,70 @@ class NoteRepository @Inject constructor(
             }
         }
 
+    suspend fun listActiveNotes(): List<NoteDto> =
+        noteDao.getAllActive().map { note ->
+            note.toDto(noteKbDao.getKbIdsForNote(note.id))
+        }
+
+    suspend fun searchNotes(query: String, kbId: String? = null, noteId: String? = null): Map<String, Any?> {
+        if (!noteId.isNullOrBlank()) {
+            val note = noteDao.getById(noteId) ?: return mapOf("error" to "笔记不存在")
+            return mapOf(
+                "note" to mapOf(
+                    "id" to note.id,
+                    "title" to note.title,
+                    "content" to note.content,
+                    "knowledge_base_ids" to noteKbDao.getKbIdsForNote(note.id),
+                ),
+            )
+        }
+        var notes = noteDao.getAllActive()
+        if (!kbId.isNullOrBlank()) {
+            val ids = noteKbDao.getNoteIdsForKb(kbId).toSet()
+            notes = notes.filter { it.id in ids }
+        }
+        val q = query.trim()
+        if (q.isNotEmpty()) {
+            notes = notes.filter {
+                it.title.contains(q, ignoreCase = true) || it.content.contains(q, ignoreCase = true)
+            }
+        }
+        return mapOf(
+            "items" to notes.take(20).map {
+                mapOf("id" to it.id, "title" to it.title, "snippet" to it.content.take(200))
+            },
+        )
+    }
+
     suspend fun get(id: String): NoteDto? {
-        val entity = noteDao.getById(id) ?: return try {
-            api.getNote(id).data.also { saveRemote(it) }
-        } catch (_: Exception) {
+        val entity = noteDao.getById(id) ?: return if (syncCoordinator.shouldWriteRemote()) {
+            try {
+                api.getNote(id).data.also { saveRemote(it) }
+            } catch (_: Exception) {
+                null
+            }
+        } else {
             null
         }
         return entity.toDto(noteKbDao.getKbIdsForNote(id))
     }
 
-    suspend fun create(title: String, content: String, kbIds: List<String> = emptyList()): NoteDto {
-        val id = UUID.randomUUID().toString()
+    suspend fun create(
+        title: String,
+        content: String,
+        kbIds: List<String> = emptyList(),
+        id: String? = null,
+    ): NoteDto {
+        val noteId = id ?: UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
-        val entity = NoteEntity(id, title, content, 1, now, null, SyncStatus.PENDING_CREATE)
+        val entity = NoteEntity(noteId, title, content, 1, now, null, SyncStatus.PENDING_CREATE)
         noteDao.upsert(entity)
-        noteKbDao.deleteForNote(id)
-        noteKbDao.insertAll(kbLinks(id, kbIds))
-        pushCreate(entity, kbIds)
-        return noteDao.getById(id)?.toDto(kbIds) ?: entity.toDto(kbIds)
+        noteKbDao.deleteForNote(noteId)
+        noteKbDao.insertAll(kbLinks(noteId, kbIds))
+        if (syncCoordinator.shouldWriteRemote()) {
+            pushCreate(entity, kbIds)
+        }
+        return noteDao.getById(noteId)?.toDto(kbIds) ?: entity.toDto(kbIds)
     }
 
     suspend fun update(
@@ -65,17 +113,21 @@ class NoteRepository @Inject constructor(
         noteDao.upsert(entity)
         noteKbDao.deleteForNote(id)
         noteKbDao.insertAll(kbLinks(id, kbIds))
-        pushUpdate(entity, kbIds)
+        if (syncCoordinator.shouldWriteRemote()) {
+            pushUpdate(entity, kbIds)
+        }
         return noteDao.getById(id)?.toDto(kbIds) ?: entity.toDto(kbIds)
     }
 
     suspend fun delete(id: String) {
         val now = System.currentTimeMillis()
         noteDao.markDeleted(id, now, now, SyncStatus.PENDING_DELETE)
-        try {
-            api.deleteNote(id)
-        } catch (_: Exception) {
-            // 离线时保留本地软删除，后续 Phase 3 同步
+        if (syncCoordinator.shouldWriteRemote()) {
+            try {
+                api.deleteNote(id)
+                noteDao.markDeleted(id, now, now, SyncStatus.SYNCED)
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -87,21 +139,35 @@ class NoteRepository @Inject constructor(
         noteKbDao.getNoteIdsForKb(kbId).mapNotNull { get(it) }
 
     suspend fun syncAllPending(): Int {
-        val pending = noteDao.getPendingSync()
+        if (!syncCoordinator.shouldWriteRemote()) return 0
         var synced = 0
-        for (entity in pending) {
+        for (entity in noteDao.getPendingSync()) {
             if (ensureSyncedOnServer(entity.id)) synced++
         }
         return synced
     }
 
+    suspend fun syncPendingDeletes(): Int {
+        if (!syncCoordinator.shouldWriteRemote()) return 0
+        var synced = 0
+        for (entity in noteDao.getPendingDeletes()) {
+            try {
+                api.deleteNote(entity.id)
+                noteDao.markDeleted(entity.id, entity.deletedAt ?: System.currentTimeMillis(), entity.updatedAt, SyncStatus.SYNCED)
+                synced++
+            } catch (_: Exception) {
+            }
+        }
+        return synced
+    }
+
     suspend fun ensureSyncedOnServer(id: String): Boolean {
+        if (!syncCoordinator.shouldWriteRemote()) return false
         val entity = noteDao.getById(id)
         if (entity == null) {
             return fetchAndSaveRemote(id)
         }
         if (entity.syncStatus == SyncStatus.SYNCED) return true
-
         val kbIds = noteKbDao.getKbIdsForNote(id)
         val pushed = when (entity.syncStatus) {
             SyncStatus.PENDING_CREATE -> pushCreate(entity, kbIds)
@@ -110,7 +176,6 @@ class NoteRepository @Inject constructor(
             SyncStatus.SYNCED -> return true
         }
         if (pushed) return true
-
         return fetchAndSaveRemote(id)
     }
 
@@ -120,8 +185,8 @@ class NoteRepository @Inject constructor(
         val content = result["content"]?.toString() ?: return
         val syncVersion = (result["sync_version"] as? Number)?.toInt() ?: 1
         val updatedAt = (result["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-        @Suppress("UNCHECKED_CAST")
         val kbIds = resolveKnowledgeBaseIds(noteId, result)
+        val status = if (syncCoordinator.shouldWriteRemote()) SyncStatus.SYNCED else SyncStatus.PENDING_UPDATE
         saveRemote(
             NoteDto(
                 id = noteId,
@@ -133,10 +198,12 @@ class NoteRepository @Inject constructor(
                 updatedAt = updatedAt,
                 deletedAt = null,
             ),
+            status,
         )
     }
 
     suspend fun refreshFromServer() {
+        if (!syncCoordinator.shouldWriteRemote()) return
         try {
             api.listNotes().data.forEach { saveRemote(it) }
         } catch (_: Exception) {
@@ -147,6 +214,31 @@ class NoteRepository @Inject constructor(
         val now = System.currentTimeMillis()
         noteDao.markDeleted(id, now, now, SyncStatus.SYNCED)
     }
+
+    suspend fun restoreFromTrash(id: String) {
+        val now = System.currentTimeMillis()
+        val status = if (syncCoordinator.shouldWriteRemote()) SyncStatus.SYNCED else SyncStatus.PENDING_UPDATE
+        noteDao.restore(id, now, status)
+        if (syncCoordinator.shouldWriteRemote()) {
+            runCatching {
+                api.restoreTrash(
+                    com.example.mindshelf.data.remote.dto.TrashRestoreRequest("note", id),
+                )
+            }
+        }
+    }
+
+    suspend fun purgeLocal(id: String) {
+        noteKbDao.deleteForNote(id)
+        noteDao.purge(id)
+    }
+
+    suspend fun saveFromRemote(dto: NoteDto) {
+        saveRemote(dto)
+    }
+
+    suspend fun countPending(): Int =
+        noteDao.getPendingSync().size + noteDao.getPendingDeletes().size
 
     private suspend fun pushCreate(entity: NoteEntity, kbIds: List<String>): Boolean {
         return try {
@@ -196,8 +288,8 @@ class NoteRepository @Inject constructor(
         return parsed
     }
 
-    private suspend fun saveRemote(dto: NoteDto) {
-        noteDao.upsert(dto.toEntity(SyncStatus.SYNCED))
+    private suspend fun saveRemote(dto: NoteDto, status: SyncStatus = SyncStatus.SYNCED) {
+        noteDao.upsert(dto.toEntity(status))
         noteKbDao.deleteForNote(dto.id)
         noteKbDao.insertAll(kbLinks(dto.id, dto.knowledgeBaseIds))
     }

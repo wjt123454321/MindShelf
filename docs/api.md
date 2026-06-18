@@ -563,81 +563,82 @@ POST /conversations/{conversation_id}/branches/{branch_id}/messages
 
 用于持久化用户消息（AI 回复由流式接口写入）。**Response `201`**
 
-### 5.7 内置 AI 流式对话 — Phase 1
+### 5.7 内置 AI LLM 代理
 
 ```http
-POST /ai/chat/stream
-Accept: text/event-stream
+POST /ai/completions
+Authorization: Bearer <access_token>
+Accept: text/event-stream   # stream=true 时
+Content-Type: application/json
 ```
 
-**Request**
+**Request**（OpenAI Chat Completions 兼容）
 
 ```json
 {
-  "conversation_id": "uuid",
-  "branch_id": "uuid",
-  "parent_message_id": "msg-uuid",
-  "message": {
-    "id": "uuid",
-    "content": "请解释协程"
-  },
-  "options": {
-    "enable_tools": true,
-    "enable_search": false,
-    "model": "deepseek-v4-flash"
-  }
+  "model": "deepseek-chat",
+  "messages": [
+    { "role": "system", "content": "…" },
+    { "role": "user", "content": "请解释协程" }
+  ],
+  "tools": [],
+  "stream": true
 }
 ```
 
 | 字段 | 说明 |
 |------|------|
-| parent_message_id | 新用户消息的父节点；首条消息可为 `null` |
-| options.enable_tools | Phase 2 起生效 |
-| options.enable_search | Phase 2 起生效（NET-*） |
-| options.model | 可选；内置服务模型，须在服务端 `config.yaml` 的 `ai.models` 白名单内 |
+| model | 须在服务端 `config.yaml` 的 `ai.models` 白名单内 |
+| tools | 可选；由客户端 `ToolLoopEngine` 注入 |
+| stream | `true` 时响应为 OpenAI SSE 格式原样透传 |
 
-**Response** — SSE 事件流，格式见 §11。流程：
+**Response** — `stream=true` 时为上游 SSE；`stream=false` 时为 JSON ChatCompletion。
 
-1. 持久化 user message  
-2. 调用内置 AI  
-3. 流式推送 assistant 内容  
-4. 结束时持久化 assistant message，发送 `done` 事件  
+> **已废弃**：`POST /ai/chat/stream`（服务端内嵌 tool loop 与消息落库）。请改用本接口 + 客户端 tool loop。
 
-### 5.8 工具写操作确认 — Phase 2
-
-当 AI 触发 `mutate_*` 写工具且需用户确认时，SSE 推送 `tool_pending`；用户确认后：
+### 5.8 联网搜索代理
 
 ```http
-POST /ai/tools/confirm
+POST /ai/search
+Authorization: Bearer <access_token>
 ```
 
 **Request**
 
 ```json
 {
-  "pending_id": "uuid",
-  "approved": true
+  "query": "Kotlin 协程 最新"
 }
 ```
+
+**说明**：UAPI 等搜索源仅返回标题/链接/摘要；`fetch_pages: true` 时服务端会对结果链接本地抓取正文（见 `server/config.yaml` 中 `max_fetch_pages`、`page_max_chars`）。
 
 **Response `200`**
 
 ```json
 {
   "data": {
-    "executed": true,
-    "result": {
-      "note_id": "uuid",
-      "title": "标题",
-      "content": "正文",
-      "sync_version": 2,
-      "updated_at": 1718400000000
-    }
+    "query": "Kotlin 协程 最新",
+    "results": [
+      {
+        "title": "…",
+        "url": "https://…",
+        "snippet": "…",
+        "content": "正文摘录（本地抓取，可选）"
+      }
+    ],
+    "result_count": 1,
+    "context": "格式化后的完整检索上下文（供 LLM tool 结果使用）",
+    "context_preview": "…"
   }
 }
 ```
 
-拒绝时 `approved: false`，返回 `{ "executed": false, "message": "用户已拒绝" }`。执行失败时 `result` 含 `{ "error": "..." }`。
+### 5.9 工具写操作确认（客户端）
+
+写工具（`mutate_note` / `mutate_knowledge_base`）由客户端 `ToolLoopEngine` 生成预览，UI 展示 `ToolActionCard`；用户确认后 `ClientToolDispatcher` 写 Room，并由 `SyncCoordinator` 推送云端。
+
+> **已废弃**：`POST /ai/tools/confirm`、`POST /ai/tools/resume/stream`、`GET /ai/tools/pending`。
 
 ---
 
@@ -1032,9 +1033,9 @@ data: {
 
 | Phase | 接口模块 |
 |-------|----------|
-| **1** | §2 认证；§3 笔记；§4 知识库；§5 对话 + `/ai/chat/stream` |
-| **2** | §5.8 工具确认；SSE `tool_*` / `search_result` |
-| **3** | §6 版本；§8 同步；§9 回收站；§10 分享 |
+| **1** | §2 认证；§3 笔记；§4 知识库；§5 对话 CRUD |
+| **2** | §5.7 `/ai/completions`；§5.8 `/ai/search`；客户端 tool loop |
+| **3** | §6 版本；§8 同步（含对话）；§9 回收站；§10 分享 |
 | **4** | §7 自定义页面；分享 `resource_type=page` |
 
 ---

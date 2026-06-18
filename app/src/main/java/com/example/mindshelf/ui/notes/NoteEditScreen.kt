@@ -14,7 +14,9 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -42,12 +44,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.ui.components.MarkdownEditor
 import com.example.mindshelf.ui.components.MarkdownText
 import com.example.mindshelf.ui.components.MindShelfTopAppBar
+import com.example.mindshelf.ui.components.ShareLinkDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoteEditScreen(
     noteId: String?,
     onBack: () -> Unit,
+    onOpenVersions: (String) -> Unit = {},
     viewModel: NotesViewModel = hiltViewModel(),
 ) {
     val editing by viewModel.editingNote.collectAsStateWithLifecycle()
@@ -60,6 +64,7 @@ fun NoteEditScreen(
     var isEditing by remember(noteId) { mutableStateOf(isNew) }
     var kbMenuExpanded by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    var showShare by remember { mutableStateOf(false) }
     var applyingHistory by remember { mutableStateOf(false) }
     var historyRevision by remember { mutableIntStateOf(0) }
     val textHistory = remember(noteId) { NoteTextHistory(NoteSnapshot("", "")) }
@@ -120,6 +125,13 @@ fun NoteEditScreen(
                 }
             } ?: run { saving = false }
         }
+    }
+
+    if (showShare && editing != null) {
+        ShareLinkDialog(
+            onRequestLink = { viewModel.createShareLink(editing!!.id) },
+            onDismiss = { showShare = false },
+        )
     }
 
     Scaffold(
@@ -220,6 +232,12 @@ fun NoteEditScreen(
                             }
                         }
                     } else {
+                        IconButton(onClick = { showShare = true }) {
+                            Icon(Icons.Default.Share, contentDescription = "分享")
+                        }
+                        IconButton(onClick = { onOpenVersions(editing!!.id) }) {
+                            Icon(Icons.Default.History, contentDescription = "版本历史")
+                        }
                         IconButton(onClick = { isEditing = true }) {
                             Icon(Icons.Default.Edit, contentDescription = "编辑")
                         }

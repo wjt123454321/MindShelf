@@ -19,7 +19,7 @@ hilt = "2.52"
 hiltNavigationCompose = "1.2.0"
 datastore = "1.1.1"
 securityCrypto = "1.1.0-alpha06"
-markdownRenderer = "0.26.0"
+markdownRenderer = "0.32.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

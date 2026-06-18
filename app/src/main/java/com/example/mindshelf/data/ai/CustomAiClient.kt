@@ -1,11 +1,10 @@
 package com.example.mindshelf.data.ai
 
-import com.example.mindshelf.data.remote.dto.MessageDto
 import com.example.mindshelf.data.repository.AiProvider
-import com.example.mindshelf.data.repository.ChatStreamEvent
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -30,30 +29,22 @@ class CustomAiClient @Inject constructor() {
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
-    fun streamChat(
+    fun completeRound(
         provider: AiProvider,
         apiKey: String,
-        history: List<MessageDto>,
-        userContent: String,
-    ): Flow<ChatStreamEvent> = flow {
-        val messages = JsonArray().apply {
-            add(jsonMessage("system", "你是 MindShelf 知识库助手，简洁准确地回答用户问题。"))
-            history.filter { it.role == "user" || it.role == "assistant" }.forEach { msg ->
-                add(jsonMessage(msg.role, msg.content.orEmpty()))
-            }
-            if (history.lastOrNull()?.role != "user" || history.lastOrNull()?.content != userContent) {
-                add(jsonMessage("user", userContent))
-            }
-        }
-
+        messages: JsonArray,
+        model: String,
+        tools: JsonArray?,
+    ): Flow<LlmStreamDelta> = flow {
         val body = JsonObject().apply {
-            addProperty("model", provider.model)
+            addProperty("model", model)
             add("messages", messages)
             addProperty("stream", true)
+            if (tools != null && tools.size() > 0) add("tools", tools)
         }
-
+        val base = provider.baseUrl.trimEnd('/')
         val request = Request.Builder()
-            .url("${provider.baseUrl}/v1/chat/completions")
+            .url("$base/v1/chat/completions")
             .addHeader("Authorization", "Bearer $apiKey")
             .addHeader("Content-Type", "application/json")
             .addHeader("Accept", "text/event-stream")
@@ -63,37 +54,61 @@ class CustomAiClient @Inject constructor() {
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    emit(ChatStreamEvent.Error("自定义 API 请求失败: ${response.code}"))
+                    emit(LlmStreamDelta.Error("自定义 API 请求失败: ${response.code}"))
                     return@flow
                 }
                 val source = response.body?.source() ?: run {
-                    emit(ChatStreamEvent.Error("空响应"))
+                    emit(LlmStreamDelta.Error("空响应"))
                     return@flow
                 }
+                val toolCalls = mutableMapOf<Int, ToolCallBuilder>()
                 readSseLines(source).forEach { line ->
                     if (!line.startsWith("data: ")) return@forEach
-                    val data = line.removePrefix("data: ")
-                    if (data.trim() == "[DONE]") return@forEach
-                    val obj = runCatching { gson.fromJson(data, JsonObject::class.java) }.getOrNull()
+                    val data = line.removePrefix("data: ").trim()
+                    if (data == "[DONE]") return@forEach
+                    val chunk = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull()
                         ?: return@forEach
-                    val delta = obj.get("choices")?.asJsonArray?.firstOrNull()?.asJsonObject
-                        ?.get("delta")?.asJsonObject ?: return@forEach
-                    val reasoning = delta.get("reasoning_content")?.asString.orEmpty()
-                    val content = delta.get("content")?.asString.orEmpty()
-                    if (reasoning.isNotEmpty()) emit(ChatStreamEvent.ReasoningDelta(reasoning))
-                    if (content.isNotEmpty()) emit(ChatStreamEvent.Delta(content))
+                    chunk.parseStreamError()?.let {
+                        emit(LlmStreamDelta.Error(it))
+                        return@flow
+                    }
+                    val choice = chunk.get("choices")?.asJsonArray?.firstOrNull()?.asJsonObject
+                    val delta = choice?.get("delta")?.asJsonObject
+                    if (delta != null) {
+                        delta.optionalString("reasoning_content")?.let {
+                            emit(LlmStreamDelta.Reasoning(it))
+                        }
+                        delta.optionalString("content")?.let {
+                            emit(LlmStreamDelta.Content(it))
+                        }
+                        delta.getAsJsonArray("tool_calls")?.forEach { tcEl ->
+                            val tc = tcEl.asJsonObject
+                            val idx = tc.get("index")?.asInt ?: 0
+                            val builder = toolCalls.getOrPut(idx) { ToolCallBuilder() }
+                            tc.optionalString("id")?.let { builder.id = it }
+                            tc.get("function")?.asJsonObject?.let { fn ->
+                                fn.optionalString("name")?.let { builder.name = it }
+                                fn.optionalString("arguments")?.let { builder.arguments += it }
+                            }
+                        }
+                    }
                 }
+                emit(LlmStreamDelta.RoundComplete(toolCalls.toSortedMap().values.mapNotNull { it.build() }))
             }
         } catch (e: IOException) {
-            emit(ChatStreamEvent.Error(e.message ?: "连接已断开"))
+            emit(LlmStreamDelta.Error(e.message ?: "连接已断开"))
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun jsonMessage(role: String, content: String): JsonObject =
-        JsonObject().apply {
-            addProperty("role", role)
-            addProperty("content", content)
+    private class ToolCallBuilder {
+        var id: String = ""
+        var name: String = ""
+        var arguments: String = ""
+        fun build(): LlmToolCall? {
+            if (name.isBlank()) return null
+            return LlmToolCall(id.ifBlank { "call_$name" }, name, arguments.ifBlank { "{}" })
         }
+    }
 
     private fun readSseLines(source: BufferedSource): Sequence<String> = sequence {
         while (true) {

@@ -114,6 +114,29 @@ class Message(db.Model):
     created_at = db.Column(db.BigInteger, nullable=False, default=_now_ms)
 
 
+class NoteVersion(db.Model):
+    __tablename__ = "note_versions"
+
+    id = db.Column(db.String(36), primary_key=True, default=_uuid)
+    note_id = db.Column(db.String(36), db.ForeignKey("notes.id"), nullable=False, index=True)
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+    title = db.Column(db.String(512), nullable=False, default="")
+    content = db.Column(db.Text, nullable=False, default="")
+    created_at = db.Column(db.BigInteger, nullable=False, default=_now_ms)
+
+
+class ShareLink(db.Model):
+    __tablename__ = "share_links"
+
+    id = db.Column(db.String(36), primary_key=True, default=_uuid)
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+    resource_type = db.Column(db.String(32), nullable=False)
+    resource_id = db.Column(db.String(36), nullable=False, index=True)
+    token = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    revoked = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.BigInteger, nullable=False, default=_now_ms)
+
+
 class PendingToolConfirmation(db.Model):
     __tablename__ = "pending_tool_confirmations"
 

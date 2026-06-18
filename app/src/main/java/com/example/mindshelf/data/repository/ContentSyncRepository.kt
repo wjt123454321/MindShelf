@@ -1,14 +1,15 @@
 package com.example.mindshelf.data.repository
 
+import com.example.mindshelf.data.sync.SyncCoordinator
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** 笔记与知识库的离线变更上行同步。 */
+/** 将待同步内容推送到服务端。 */
 @Singleton
 class ContentSyncRepository @Inject constructor(
-    private val noteRepository: NoteRepository,
-    private val knowledgeRepository: KnowledgeRepository,
+    private val syncCoordinator: SyncCoordinator,
 ) {
-    suspend fun syncAllPending(): Int =
-        noteRepository.syncAllPending() + knowledgeRepository.syncAllPending()
+    suspend fun syncAllPending(): Int = syncCoordinator.flushPending()
+
+    suspend fun syncAll(): SyncResult = syncCoordinator.syncAll()
 }

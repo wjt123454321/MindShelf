@@ -201,6 +201,14 @@ fun AssistantMessageBubble(
                     onReject = { onRejectTool(tool.id) },
                 )
             }
+            if (isStreaming && isStreamingReasoning && !hasReasoning) {
+                CollapsibleReasoningSection(
+                    reasoning = "",
+                    roundLabel = null,
+                    hasReply = hasReply,
+                    isStreamingReasoning = true,
+                )
+            }
             val reasoningRounds = reasoning.split("\n\n---\n\n").filter { it.isNotBlank() }
             reasoningRounds.forEachIndexed { index, round ->
                 CollapsibleReasoningSection(
@@ -225,19 +233,11 @@ fun AssistantMessageBubble(
                 )
             }
         }
-        if (!hasReply && !hasReasoning && !isStreamingContent) {
-            if (statusHint != null && isStreaming) {
-                Text(
-                    statusHint,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (searchSources.isNotEmpty() && isStreaming) {
-                Text(
-                    "正在整理搜索结果…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        if (isStreaming && !statusHint.isNullOrBlank() && shouldShowStreamingStatusHint(statusHint)) {
+            StreamingStatusHint(text = statusHint)
+        } else if (!hasReply && !hasReasoning && !isStreamingContent && !isStreamingReasoning) {
+            if (searchSources.isNotEmpty() && isStreaming) {
+                StreamingStatusHint(text = "正在整理搜索结果…")
             }
         }
         if (hasSiblings) {
@@ -260,6 +260,48 @@ fun AssistantMessageBubble(
                 onStopTts = onStopTts,
             )
         }
+    }
+}
+
+private fun shouldShowStreamingStatusHint(hint: String): Boolean {
+    if (hint.contains("思考")) return false
+    return hint.contains("搜索") ||
+        hint.contains("联网") ||
+        hint.contains("整理") ||
+        hint.contains("工具") ||
+        hint.contains("笔记") ||
+        hint.contains("知识库")
+}
+
+@Composable
+private fun StreamingStatusHint(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    val isSearch = text.contains("搜索") || text.contains("联网")
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (isSearch) {
+            Icon(
+                Icons.Default.Public,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        } else {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+            )
+        }
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

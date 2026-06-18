@@ -13,6 +13,7 @@ import com.example.mindshelf.data.repository.ChatRepository
 import com.example.mindshelf.data.repository.ChatStreamEvent
 import com.example.mindshelf.data.repository.SearchSource
 import com.example.mindshelf.data.local.AiPreferences
+import com.example.mindshelf.data.local.ChatPreferences
 import com.example.mindshelf.data.chat.buildBranchPathMessages
 import com.example.mindshelf.data.repository.ContentSyncRepository
 import com.example.mindshelf.data.repository.KnowledgeRepository
@@ -30,7 +31,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import retrofit2.HttpException
 import java.util.UUID
 import javax.inject.Inject
 
@@ -48,6 +48,7 @@ class ChatViewModel @Inject constructor(
     private val knowledgeRepository: KnowledgeRepository,
     private val contentSyncRepository: ContentSyncRepository,
     private val aiPreferences: AiPreferences,
+    private val chatPreferences: ChatPreferences,
     @ApplicationScope private val applicationScope: CoroutineScope,
 ) : ViewModel() {
 
@@ -124,6 +125,7 @@ class ChatViewModel @Inject constructor(
         if (_activeChat.value != null) {
             viewModelScope.launch {
                 contentSyncRepository.syncAllPending()
+                restoreLastActiveBranchIfNeeded()
                 refreshActiveChatFromRemote()
                 _activeChat.value?.let { loadPendingTools(it) }
             }
@@ -150,10 +152,14 @@ class ChatViewModel @Inject constructor(
                 ?.takeIf { it.conversationId == conv.id }
                 ?.branchId
                 ?.takeIf { id -> branches.any { it.id == id } }
-            val branchId = preservedBranchId ?: branches.first().id
+            val branchId = resolveActiveBranchId(
+                conversationId = conv.id,
+                preferredBranchId = preservedBranchId,
+                branches = branches,
+            ) ?: return@launch
             _branches.value = branches
             pendingSendParentId = null
-            _activeChat.value = ActiveChat(conv.id, branchId, conv.title)
+            commitActiveChat(ActiveChat(conv.id, branchId, conv.title))
             reloadBranchMessages(ActiveChat(conv.id, branchId, conv.title))
             loadSearchSources(conv.id)
             loadPendingTools(ActiveChat(conv.id, branchId, conv.title))
@@ -165,7 +171,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             pendingSendParentId = null
             val active = chat.copy(branchId = branchId)
-            _activeChat.value = active
+            commitActiveChat(active)
             reloadBranchMessages(active)
             loadSearchSources(chat.conversationId)
             loadPendingTools(active)
@@ -196,13 +202,19 @@ class ChatViewModel @Inject constructor(
     fun forkFromMessage(message: MessageDto) {
         val chat = _activeChat.value ?: return
         viewModelScope.launch {
+            ensureForkContextPersisted(chat, message)
             val label = "分支 ${_branches.value.size + 1}"
-            val branch = chatRepository.createBranch(chat.conversationId, message.id, label)
-            _branches.value = chatRepository.listBranches(chat.conversationId)
+            val branch = chatRepository.createBranch(
+                chat.conversationId,
+                message.id,
+                label,
+                rootMessageId = message.parentId,
+            )
+            _branches.value = chatRepository.listBranchesLocal(chat.conversationId)
             pendingSendParentId = message.parentId
-            _activeChat.value = chat.copy(branchId = branch.id)
+            commitActiveChat(chat.copy(branchId = branch.id))
             reloadBranchMessages(chat.copy(branchId = branch.id))
-            _allMessages.value = chatRepository.listAllMessages(chat.conversationId)
+            _allMessages.value = chatRepository.listAllMessagesLocal(chat.conversationId)
             loadPendingTools(chat.copy(branchId = branch.id))
         }
     }
@@ -213,16 +225,21 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val chat = _activeChat.value ?: return@launch
-                _allMessages.value = chatRepository.listAllMessages(chat.conversationId)
+                _allMessages.value = chatRepository.listAllMessagesLocal(chat.conversationId)
                 val forkTarget = _allMessages.value.find { it.id == message.id }
                     ?: _messages.value.find { it.id == message.id }
                     ?: message
+                ensureForkContextPersisted(chat, forkTarget)
                 val label = "分支 ${_branches.value.size + 1}"
-                val branch = chatRepository.createBranch(chat.conversationId, forkTarget.id, label)
-                _branches.value = chatRepository.listBranches(chat.conversationId)
-                pendingSendParentId = forkTarget.parentId
+                val branch = chatRepository.createBranch(
+                    chat.conversationId,
+                    forkTarget.id,
+                    label,
+                    rootMessageId = forkTarget.parentId,
+                )
+                _branches.value = chatRepository.listBranchesLocal(chat.conversationId)
                 val active = chat.copy(branchId = branch.id)
-                _activeChat.value = active
+                commitActiveChat(active)
                 reloadBranchMessages(active)
                 loadPendingTools(active)
                 launchStream { generation ->
@@ -242,14 +259,20 @@ class ChatViewModel @Inject constructor(
         if (userMsg == null || _streaming.value) return
         viewModelScope.launch {
             val chat = _activeChat.value ?: return@launch
+            ensureForkContextPersisted(chat, userMsg)
             val label = "重新生成 ${_branches.value.size + 1}"
-            val branch = chatRepository.createBranch(chat.conversationId, userMsg.id, label)
-            _branches.value = chatRepository.listBranches(chat.conversationId)
-            pendingSendParentId = userMsg.parentId
-            _activeChat.value = chat.copy(branchId = branch.id)
-            reloadBranchMessages(chat.copy(branchId = branch.id))
+            val branch = chatRepository.createBranch(
+                chat.conversationId,
+                userMsg.id,
+                label,
+                rootMessageId = userMsg.parentId,
+            )
+            _branches.value = chatRepository.listBranchesLocal(chat.conversationId)
+            val active = chat.copy(branchId = branch.id)
+            commitActiveChat(active)
+            reloadBranchMessages(active)
             launchStream { generation ->
-                streamChat(chat.copy(branchId = branch.id), userMsg.parentId, userMsg.content, generation)
+                streamChat(active, userMsg.parentId, userMsg.content, generation)
             }
         }
     }
@@ -299,7 +322,7 @@ class ChatViewModel @Inject constructor(
         val branchId = branches.first().id
         pendingSendParentId = null
         _branches.value = branches
-        _activeChat.value = ActiveChat(conv.id, branchId, conv.title)
+        commitActiveChat(ActiveChat(conv.id, branchId, conv.title))
         _messages.value = emptyList()
         _allMessages.value = emptyList()
         _input.value = ""
@@ -312,7 +335,8 @@ class ChatViewModel @Inject constructor(
         } else {
             chatRepository.listConversations()
         }
-        val targetId = _activeChat.value?.conversationId
+        val saved = chatPreferences.getLastActiveChat()
+        val targetId = _activeChat.value?.conversationId ?: saved?.conversationId
         val recent = targetId?.let { id -> _conversations.value.find { it.id == id } }
             ?: _conversations.value.firstOrNull()
         if (recent != null) {
@@ -323,20 +347,23 @@ class ChatViewModel @Inject constructor(
             }
             if (branches.isEmpty()) {
                 pendingSendParentId = null
-                _activeChat.value = null
+                commitActiveChat(null)
                 _branches.value = emptyList()
                 _messages.value = emptyList()
                 _allMessages.value = emptyList()
                 return
             }
-            val branchId = _activeChat.value
-                ?.takeIf { it.conversationId == recent.id }
-                ?.branchId
-                ?.takeIf { id -> branches.any { it.id == id } }
-                ?: branches.first().id
+            val branchId = resolveActiveBranchId(
+                conversationId = recent.id,
+                preferredBranchId = _activeChat.value
+                    ?.takeIf { it.conversationId == recent.id }
+                    ?.branchId
+                    ?: saved?.takeIf { it.conversationId == recent.id }?.branchId,
+                branches = branches,
+            ) ?: branches.first().id
             pendingSendParentId = null
             _branches.value = branches
-            _activeChat.value = ActiveChat(recent.id, branchId, recent.title)
+            commitActiveChat(ActiveChat(recent.id, branchId, recent.title))
             _messages.value = if (localOnly) {
                 chatRepository.listMessagesLocal(recent.id, branchId)
             } else {
@@ -351,7 +378,7 @@ class ChatViewModel @Inject constructor(
             loadSearchSources(recent.id)
         } else {
             pendingSendParentId = null
-            _activeChat.value = null
+            commitActiveChat(null)
             _branches.value = emptyList()
             _messages.value = emptyList()
             _allMessages.value = emptyList()
@@ -381,22 +408,156 @@ class ChatViewModel @Inject constructor(
             return
         }
         _branches.value = chatRepository.listBranches(chat.conversationId)
-        val branchId = chat.branchId.takeIf { id -> _branches.value.any { it.id == id } }
-            ?: _branches.value.firstOrNull()?.id
-            ?: return
-        _activeChat.value = chat.copy(title = conv.title, branchId = branchId)
-        reloadBranchMessages(_activeChat.value!!)
+        val branchId = resolveActiveBranchId(
+            conversationId = chat.conversationId,
+            preferredBranchId = chat.branchId,
+            branches = _branches.value,
+        ) ?: return
+        val active = chat.copy(title = conv.title, branchId = branchId)
+        commitActiveChat(active)
+        reloadBranchMessages(active)
         loadSearchSources(chat.conversationId)
     }
 
-    private suspend fun reloadBranchMessages(chat: ActiveChat) {
-        _allMessages.value = chatRepository.listAllMessages(chat.conversationId)
-        _branches.value = chatRepository.listBranches(chat.conversationId)
-        val path = buildBranchPathMessages(_allMessages.value, chat.branchId, _branches.value)
-        val remote = path.ifEmpty {
-            chatRepository.listMessages(chat.conversationId, chat.branchId)
+    private suspend fun refreshBranchDisplay(chat: ActiveChat) {
+        _allMessages.value = chatRepository.listAllMessagesLocal(chat.conversationId)
+        _branches.value = chatRepository.listBranchesLocal(chat.conversationId)
+        val path = resolveBranchPath(chat)
+        _messages.value = mergeBranchMessages(_messages.value, path)
+    }
+
+    private suspend fun finalizeStreamMessages(
+        chat: ActiveChat,
+        tempUserId: String,
+        assistantId: String,
+        segments: MutableList<MessageSegment>,
+        pendingContent: String,
+        pendingSearchSources: List<SearchSource>,
+    ) {
+        if (pendingContent.isNotBlank()) {
+            appendSegment(segments, "content", pendingContent)
         }
-        _messages.value = mergeBranchMessages(_messages.value, remote)
+        dedupeContentSegments(segments)
+        collapseReasoningContentOverlap(segments)
+        val assistantDraft = _messages.value.find { it.id == assistantId }
+        val hasOutput = segments.isNotEmpty() ||
+            !assistantDraft?.content.isNullOrBlank() ||
+            !assistantDraft?.reasoning.isNullOrBlank()
+        val awaitingTool = _toolActions.value.any {
+            it.anchorMessageId == assistantId &&
+                (it.status == ToolActionStatus.PENDING || it.status == ToolActionStatus.EXECUTING)
+        }
+        if (hasOutput || awaitingTool) {
+            val assistant = buildStreamingAssistant(assistantId, chat, tempUserId, segments)
+            _messages.update { list -> list.upsertMessage(assistant) }
+            if (pendingSearchSources.isNotEmpty()) {
+                applySearchSources(assistantId, pendingSearchSources)
+            }
+        } else {
+            _messages.update { list ->
+                list.map { msg ->
+                    if (msg.id == assistantId) msg.copy(content = "AI 未返回内容") else msg
+                }
+            }
+        }
+        chatRepository.upsertMessages(_messages.value)
+        syncAllMessagesFromCurrent()
+        refreshBranchDisplay(chat)
+    }
+
+    private suspend fun reloadBranchMessages(chat: ActiveChat) {
+        _allMessages.value = chatRepository.listAllMessagesLocal(chat.conversationId)
+        _branches.value = chatRepository.listBranchesLocal(chat.conversationId)
+        _messages.value = resolveBranchPath(chat)
+    }
+
+    private suspend fun commitActiveChat(chat: ActiveChat?) {
+        _activeChat.value = chat
+        if (chat != null) {
+            chatPreferences.setLastActiveChat(chat.conversationId, chat.branchId)
+        } else {
+            chatPreferences.clearLastActiveChat()
+        }
+    }
+
+    /** 优先保留当前/已保存分支，避免刷新或返回页面时回退到主分支。 */
+    private suspend fun resolveActiveBranchId(
+        conversationId: String,
+        preferredBranchId: String?,
+        branches: List<BranchDto>,
+    ): String? {
+        preferredBranchId?.takeIf { id -> branches.any { it.id == id } }?.let { return it }
+        preferredBranchId?.let { id ->
+            chatRepository.getBranchLocal(conversationId, id)?.let { branch ->
+                if (_branches.value.none { it.id == branch.id }) {
+                    _branches.value = _branches.value + branch
+                }
+                return branch.id
+            }
+        }
+        chatPreferences.getLastActiveChat()
+            ?.takeIf { it.conversationId == conversationId }
+            ?.branchId
+            ?.let { savedId ->
+                if (branches.any { it.id == savedId }) return savedId
+                chatRepository.getBranchLocal(conversationId, savedId)?.let { branch ->
+                    if (_branches.value.none { it.id == branch.id }) {
+                        _branches.value = _branches.value + branch
+                    }
+                    return branch.id
+                }
+            }
+        return branches.firstOrNull()?.id
+    }
+
+    private suspend fun restoreLastActiveBranchIfNeeded() {
+        val chat = _activeChat.value ?: return
+        val saved = chatPreferences.getLastActiveChat() ?: return
+        if (saved.conversationId != chat.conversationId || saved.branchId == chat.branchId) return
+        _branches.value = chatRepository.listBranchesLocal(chat.conversationId)
+        val branchId = resolveActiveBranchId(
+            conversationId = chat.conversationId,
+            preferredBranchId = saved.branchId,
+            branches = _branches.value,
+        ) ?: return
+        if (branchId == chat.branchId) return
+        commitActiveChat(chat.copy(branchId = branchId))
+    }
+
+    private suspend fun resolveBranchPath(chat: ActiveChat): List<MessageDto> {
+        val branch = _branches.value.find { it.id == chat.branchId }
+            ?: chatRepository.getBranchLocal(chat.conversationId, chat.branchId)?.also { found ->
+                if (_branches.value.none { it.id == found.id }) {
+                    _branches.value = _branches.value + found
+                }
+            }
+        return buildBranchPathMessages(
+            allMessages = _allMessages.value,
+            branchId = chat.branchId,
+            branches = _branches.value,
+            branchOverride = branch,
+        )
+    }
+
+    /** 确保 fork 点及其祖先链已落库，供分支路径计算与服务端 createBranch 使用。 */
+    private suspend fun ensureForkContextPersisted(chat: ActiveChat, forkMessage: MessageDto) {
+        val all = chatRepository.listAllMessagesLocal(chat.conversationId)
+        val branches = chatRepository.listBranchesLocal(chat.conversationId)
+        val path = buildBranchPathMessages(all, chat.branchId, branches)
+        val toPersist = buildList {
+            for (msg in path) {
+                add(msg)
+                if (msg.id == forkMessage.id) break
+            }
+            if (none { it.id == forkMessage.id }) {
+                add(forkMessage)
+            }
+        }
+        if (toPersist.isNotEmpty()) {
+            chatRepository.upsertMessages(toPersist)
+        }
+        _allMessages.value = chatRepository.listAllMessagesLocal(chat.conversationId)
+        syncAllMessagesFromCurrent()
     }
 
     private fun cancelActiveStream() {
@@ -427,7 +588,7 @@ class ChatViewModel @Inject constructor(
         pendingSendParentId = null
         _branches.value = branches
         val active = ActiveChat(conv.id, branchId, conv.title)
-        _activeChat.value = active
+        commitActiveChat(active)
         _messages.value = emptyList()
         _allMessages.value = emptyList()
         _conversations.value = chatRepository.listConversations()
@@ -468,68 +629,19 @@ class ChatViewModel @Inject constructor(
         val item = _toolActions.value.find { it.id == pendingId } ?: return
         if (item.status != ToolActionStatus.PENDING && item.status != ToolActionStatus.EXECUTING) return
         val chat = _activeChat.value ?: return
+        if (!approved) {
+            updateToolAction(pendingId) {
+                it.copy(status = ToolActionStatus.REJECTED, resultMessage = "已取消")
+            }
+            viewModelScope.launch {
+                aiRouter.resumeAfterToolConfirm(pendingId, false).collect { }
+            }
+            return
+        }
         viewModelScope.launch {
             updateToolAction(pendingId) { it.copy(status = ToolActionStatus.EXECUTING) }
-            try {
-                if (approved && item.tool == "mutate_note") {
-                    contentSyncRepository.syncAllPending()
-                    val noteId = item.preview.noteId
-                    if (item.preview.action == "delete" && !noteId.isNullOrBlank()) {
-                        if (!noteRepository.ensureSyncedOnServer(noteId)) {
-                            updateToolAction(pendingId) {
-                                it.copy(
-                                    status = ToolActionStatus.FAILED,
-                                    errorMessage = "笔记同步失败，请检查网络连接后重试",
-                                )
-                            }
-                            return@launch
-                        }
-                    } else if (item.preview.action == "update" && !noteId.isNullOrBlank()) {
-                        noteRepository.ensureSyncedOnServer(noteId)
-                    }
-                }
-                val response = aiRouter.confirmTool(pendingId, approved)
-                if (!approved || !response.executed) {
-                    updateToolAction(pendingId) {
-                        it.copy(
-                            status = ToolActionStatus.REJECTED,
-                            resultMessage = response.message ?: "已取消",
-                        )
-                    }
-                    return@launch
-                }
-                val toolResult = response.result
-                val error = toolResult?.get("error")?.toString()
-                if (!error.isNullOrBlank()) {
-                    updateToolAction(pendingId) {
-                        it.copy(status = ToolActionStatus.FAILED, errorMessage = error)
-                    }
-                    return@launch
-                }
-                updateToolAction(pendingId) {
-                    it.copy(
-                        status = ToolActionStatus.SUCCESS,
-                        resultMessage = buildToolSuccessMessage(item.tool, item.preview, toolResult),
-                    )
-                }
-                syncBranchMessagesForToolResume(chat)
-                launchStream { generation -> resumeAfterTool(chat, pendingId, generation) }
-                viewModelScope.launch { applyToolSync(item.tool, toolResult) }
-            } catch (e: HttpException) {
-                updateToolAction(pendingId) {
-                    it.copy(
-                        status = ToolActionStatus.FAILED,
-                        errorMessage = e.message() ?: "确认请求失败",
-                    )
-                }
-            } catch (e: Exception) {
-                updateToolAction(pendingId) {
-                    it.copy(
-                        status = ToolActionStatus.FAILED,
-                        errorMessage = e.message ?: "操作失败",
-                    )
-                }
-            }
+            launchStream { generation -> resumeAfterTool(chat, pendingId, generation) }
+            contentSyncRepository.syncAll()
         }
     }
 
@@ -539,9 +651,12 @@ class ChatViewModel @Inject constructor(
 
         viewModelScope.launch {
             val chat = _activeChat.value ?: createConversationForFirstMessage()
-            val parentId = pendingSendParentId ?: _messages.value.lastOrNull()?.id
+            commitActiveChat(chat)
+            reloadBranchMessages(chat)
+            val parentId = pendingSendParentId.also { pendingSendParentId = null }
+                ?: _messages.value.lastOrNull { it.role == "assistant" }?.id
+                ?: _messages.value.lastOrNull()?.id
             _input.value = ""
-            pendingSendParentId = null
             launchStream { generation -> streamChat(chat, parentId, content, generation) }
         }
     }
@@ -566,6 +681,7 @@ class ChatViewModel @Inject constructor(
         content: String,
         streamGeneration: Int,
     ) {
+        pendingSendParentId = null
         val tempId = UUID.randomUUID().toString()
         val userMsg = MessageDto(
             id = tempId,
@@ -576,19 +692,22 @@ class ChatViewModel @Inject constructor(
             content = content,
             createdAt = System.currentTimeMillis(),
         )
-        _messages.update { it + userMsg }
+        val path = resolveBranchPath(chat)
+        _messages.value = path + userMsg
         syncAllMessagesFromCurrent()
+        chatRepository.upsertMessages(listOf(userMsg))
         contentSyncRepository.syncAllPending()
         _streaming.value = true
-        _streamStatusHint.value = "思考中…"
-        _reasoningStreaming.value = false
+        _streamStatusHint.value = null
+        _reasoningStreaming.value = true
 
         var assistantContent = ""
         var assistantReasoning = ""
         var pendingContent = ""
         val segments = mutableListOf<MessageSegment>()
         val assistantId = UUID.randomUUID().toString()
-        _messages.update { it + buildStreamingAssistant(assistantId, chat, tempId, segments) }
+        _messages.value = _messages.value + buildStreamingAssistant(assistantId, chat, tempId, segments)
+        val llmHistory = path.filter { it.role == "user" || it.role == "assistant" }
         var receivedMessageDone = false
         var pendingSearchSources: List<SearchSource> = emptyList()
         try {
@@ -597,31 +716,17 @@ class ChatViewModel @Inject constructor(
                 chat.branchId,
                 parentId,
                 content,
-                _messages.value.filter { it.id != tempId && it.id != assistantId },
+                llmHistory,
             ).collect { event ->
                 if (!isStreamActive(chat, streamGeneration)) return@collect
                 when (event) {
-                    is ChatStreamEvent.Status -> {
-                        _streamStatusHint.value = when (event.phase) {
-                            "searching" -> "正在联网搜索…"
-                            "search_no_results" -> "未找到相关网页"
-                            "search_unavailable" -> "联网搜索未启用"
-                            "thinking" -> "思考中…"
-                            "tool" -> when (event.tool) {
-                                "web_search" -> "正在联网搜索…"
-                                "search_notes" -> "正在搜索笔记…"
-                                "search_knowledge_bases" -> "正在搜索知识库…"
-                                else -> "正在调用工具…"
-                            }
-                            else -> _streamStatusHint.value
-                        }
-                    }
+                    is ChatStreamEvent.Status -> applyStreamStatus(event.phase, event.tool)
                     is ChatStreamEvent.ReasoningRoundStart -> {
                         if (assistantReasoning.isNotBlank()) {
                             assistantReasoning += "\n\n---\n\n"
                         }
                         _reasoningStreaming.value = true
-                        _streamStatusHint.value = if (event.round > 1) "继续思考…" else "思考中…"
+                        _streamStatusHint.value = null
                     }
                     is ChatStreamEvent.ReasoningDelta -> {
                         _streamStatusHint.value = null
@@ -641,17 +746,15 @@ class ChatViewModel @Inject constructor(
                     is ChatStreamEvent.Delta -> {
                         _streamStatusHint.value = null
                         if (event.content.isNotEmpty()) {
-                            if (_reasoningStreaming.value && assistantReasoning.isNotBlank()) {
-                                pendingContent += event.content
-                            } else {
+                            if (_reasoningStreaming.value) {
                                 _reasoningStreaming.value = false
-                                if (pendingContent.isNotBlank()) {
-                                    appendSegment(segments, "content", pendingContent)
-                                    pendingContent = ""
-                                }
-                                appendSegment(segments, "content", event.content)
-                                assistantContent = contentFromSegments(segments)
                             }
+                            if (pendingContent.isNotBlank()) {
+                                appendSegment(segments, "content", pendingContent)
+                                pendingContent = ""
+                            }
+                            appendSegment(segments, "content", event.content)
+                            assistantContent = contentFromSegments(segments)
                         }
                         _messages.update { list ->
                             list.upsertMessage(
@@ -662,10 +765,11 @@ class ChatViewModel @Inject constructor(
                     is ChatStreamEvent.MessageDone -> {
                         receivedMessageDone = true
                         if (pendingContent.isNotBlank()) {
-                            assistantContent += pendingContent
                             appendSegment(segments, "content", pendingContent)
                             pendingContent = ""
                         }
+                        dedupeContentSegments(segments)
+                        collapseReasoningContentOverlap(segments)
                         val doneMsg = event.message.copy(
                             content = event.message.content.orEmpty().ifBlank { contentFromSegments(segments) },
                             reasoning = event.message.reasoning?.takeIf { it.isNotBlank() }
@@ -697,11 +801,11 @@ class ChatViewModel @Inject constructor(
                         if (pendingContent.isNotBlank()) {
                             appendSegment(segments, "content", pendingContent)
                             pendingContent = ""
-                            _messages.update { list ->
-                                list.upsertMessage(
-                                    buildStreamingAssistant(assistantId, chat, tempId, segments),
-                                )
-                            }
+                        }
+                        _messages.update { list ->
+                            list.upsertMessage(
+                                buildStreamingAssistant(assistantId, chat, tempId, segments),
+                            )
                         }
                         val toolItem = ToolActionItem(
                             id = event.pendingId,
@@ -721,8 +825,8 @@ class ChatViewModel @Inject constructor(
                         persistToolAction(toolItem)
                     }
                     is ChatStreamEvent.SearchResult -> {
-                        pendingSearchSources = event.results
-                        applySearchSources(assistantId, event.results)
+                        pendingSearchSources = mergeSearchSources(pendingSearchSources, event.results)
+                        applySearchSources(assistantId, pendingSearchSources)
                         _streamStatusHint.value = "正在整理搜索结果…"
                     }
                     is ChatStreamEvent.Error -> {
@@ -737,7 +841,9 @@ class ChatViewModel @Inject constructor(
                         )
                         _messages.update { list -> list.upsertMessage(errAssistant) }
                     }
+                    is ChatStreamEvent.StreamComplete -> Unit
                     is ChatStreamEvent.Done -> Unit
+                    is ChatStreamEvent.ToolExecuted -> Unit
                 }
             }
         } catch (e: CancellationException) {
@@ -750,32 +856,26 @@ class ChatViewModel @Inject constructor(
                 _streamStatusHint.value = null
                 _reasoningStreaming.value = false
             }
-            if (pendingContent.isNotBlank()) {
-                assistantContent += pendingContent
-                appendSegment(segments, "content", pendingContent)
-            }
             if (streamGeneration != activeStreamGeneration) return
             if (!isStreamActive(chat, streamGeneration)) return
             try {
-                if (!receivedMessageDone && (assistantContent.isNotBlank() || assistantReasoning.isNotBlank() || segments.isNotEmpty())) {
-                    val fallbackAssistant = buildStreamingAssistant(
-                        assistantId, chat, tempId, segments,
-                    )
-                    if (pendingSearchSources.isNotEmpty()) {
-                        applySearchSources(assistantId, pendingSearchSources)
-                    }
-                    _messages.update { list ->
-                        list.upsertMessage(fallbackAssistant)
-                    }
-                    chatRepository.upsertMessages(_messages.value)
-                }
                 if (!receivedMessageDone) {
-                    reloadBranchMessages(chat)
+                    finalizeStreamMessages(
+                        chat = chat,
+                        tempUserId = tempId,
+                        assistantId = assistantId,
+                        segments = segments,
+                        pendingContent = pendingContent,
+                        pendingSearchSources = pendingSearchSources,
+                    )
                 } else {
-                    refreshBranchesAndAllMessages()
+                    chatRepository.upsertMessages(_messages.value)
+                    syncAllMessagesFromCurrent()
+                    refreshBranchDisplay(chat)
                 }
                 refreshActiveTitle(chat.conversationId)
                 loadPendingTools(chat)
+                contentSyncRepository.syncAll()
             } catch (_: Exception) {
                 // 保留流式过程中的内存消息
             }
@@ -799,8 +899,8 @@ class ChatViewModel @Inject constructor(
                 return
             }
         _streaming.value = true
-        _streamStatusHint.value = "继续处理…"
-        _reasoningStreaming.value = false
+        _streamStatusHint.value = null
+        _reasoningStreaming.value = true
 
         val segments = existing.segments.orEmpty().toMutableList()
         var assistantContent = existing.content.orEmpty()
@@ -809,27 +909,36 @@ class ChatViewModel @Inject constructor(
         var receivedMessageDone = false
 
         try {
-            aiRouter.streamToolResume(pendingId).collect { event ->
+            aiRouter.resumeAfterToolConfirm(pendingId, true).collect { event ->
                 if (!isStreamActive(chat, streamGeneration)) return@collect
                 when (event) {
-                    is ChatStreamEvent.Status -> {
-                        _streamStatusHint.value = when (event.phase) {
-                            "thinking" -> "继续思考…"
-                            "tool" -> when (event.tool) {
-                                "web_search" -> "正在联网搜索…"
-                                "search_notes" -> "正在搜索笔记…"
-                                "search_knowledge_bases" -> "正在搜索知识库…"
-                                else -> "正在调用工具…"
+                    is ChatStreamEvent.ToolExecuted -> {
+                        val result = event.result
+                        if (result["error"] != null) {
+                            updateToolAction(pendingId) {
+                                it.copy(
+                                    status = ToolActionStatus.FAILED,
+                                    errorMessage = result["error"]?.toString(),
+                                )
                             }
-                            else -> _streamStatusHint.value
+                        } else {
+                            @Suppress("UNCHECKED_CAST")
+                            applyToolSync(event.tool, result as Map<String, Any>)
+                            updateToolAction(pendingId) {
+                                it.copy(
+                                    status = ToolActionStatus.SUCCESS,
+                                    resultMessage = buildToolSuccessMessage(event.tool, event.preview, result),
+                                )
+                            }
                         }
                     }
+                    is ChatStreamEvent.Status -> applyStreamStatus(event.phase, event.tool)
                     is ChatStreamEvent.ReasoningRoundStart -> {
                         if (assistantReasoning.isNotBlank()) {
                             assistantReasoning += "\n\n---\n\n"
                         }
                         _reasoningStreaming.value = true
-                        _streamStatusHint.value = "继续思考…"
+                        _streamStatusHint.value = null
                     }
                     is ChatStreamEvent.ReasoningDelta -> {
                         _streamStatusHint.value = null
@@ -846,8 +955,8 @@ class ChatViewModel @Inject constructor(
                     is ChatStreamEvent.Delta -> {
                         _streamStatusHint.value = null
                         _reasoningStreaming.value = false
-                        assistantContent += event.content
                         appendSegment(segments, "content", event.content)
+                        assistantContent = contentFromSegments(segments)
                         _messages.update { list ->
                             list.map { msg ->
                                 if (msg.id == assistantId) buildStreamingAssistant(assistantId, chat, parentId, segments)
@@ -857,6 +966,8 @@ class ChatViewModel @Inject constructor(
                     }
                     is ChatStreamEvent.MessageDone -> {
                         receivedMessageDone = true
+                        dedupeContentSegments(segments)
+                        collapseReasoningContentOverlap(segments)
                         val doneMsg = event.message.copy(
                             content = event.message.content.orEmpty().ifBlank { contentFromSegments(segments) },
                             reasoning = event.message.reasoning?.takeIf { it.isNotBlank() }
@@ -921,17 +1032,22 @@ class ChatViewModel @Inject constructor(
             if (streamGeneration != activeStreamGeneration) return
             if (!isStreamActive(chat, streamGeneration)) return
             try {
-                if (!receivedMessageDone && segments.isNotEmpty()) {
-                    val fallback = buildStreamingAssistant(assistantId, chat, parentId, segments, pendingContent)
-                    _messages.update { list -> list.upsertMessage(fallback) }
-                    chatRepository.upsertMessages(_messages.value)
-                }
                 if (!receivedMessageDone) {
-                    reloadBranchMessages(chat)
+                    finalizeStreamMessages(
+                        chat = chat,
+                        tempUserId = parentId,
+                        assistantId = assistantId,
+                        segments = segments,
+                        pendingContent = pendingContent,
+                        pendingSearchSources = emptyList(),
+                    )
                 } else {
-                    refreshBranchesAndAllMessages()
+                    chatRepository.upsertMessages(_messages.value)
+                    syncAllMessagesFromCurrent()
+                    refreshBranchDisplay(chat)
                 }
                 loadPendingTools(chat)
+                contentSyncRepository.syncAll()
             } catch (_: Exception) {
             }
         }
@@ -956,45 +1072,21 @@ class ChatViewModel @Inject constructor(
                 createdAt = entity.createdAt,
             )
         }
-        val pending = chatRepository.listPendingTools(chat.conversationId, chat.branchId)
-        val lastAssistantId = _messages.value.lastOrNull { it.role == "assistant" }?.id
-        val lastUserId = _messages.value.lastOrNull { it.role == "user" }?.id
-        val messageIds = _messages.value.map { it.id }.toSet()
-        val restoredPending = pending.map { dto ->
-            val existing = stored.find { it.id == dto.id }
-            val anchor = existing?.anchorMessageId?.takeIf { it in messageIds }
-                ?: lastAssistantId?.takeIf { it in messageIds }
-                ?: lastUserId?.takeIf { it in messageIds }
-            ToolActionItem(
-                id = dto.id,
-                conversationId = dto.conversationId,
-                branchId = dto.branchId,
-                tool = dto.tool,
-                preview = dto.preview,
-                status = ToolActionStatus.PENDING,
-                anchorMessageId = anchor,
-                segmentIndex = existing?.segmentIndex,
-                createdAt = dto.createdAt,
-            )
-        }
         _toolActions.update { current ->
             val other = current.filter {
                 it.conversationId != chat.conversationId || it.branchId != chat.branchId
             }
-            val pendingIds = restoredPending.map { it.id }.toSet()
-            val merged = (restoredPending + stored.filter { it.id !in pendingIds })
-                .groupBy { it.id }
-                .map { (_, items) -> items.maxBy { toolStatusPriority(it.status) } }
-            other + merged
+            other + stored
         }
-        restoredPending.forEach { persistToolAction(it) }
     }
 
     private fun appendSegment(segments: MutableList<MessageSegment>, type: String, text: String) {
         if (text.isEmpty()) return
         if (segments.lastOrNull()?.type == type) {
             val last = segments.last()
-            segments[segments.lastIndex] = last.copy(text = last.text + text)
+            val merged = mergeStreamingText(last.text, text)
+            if (merged == last.text) return
+            segments[segments.lastIndex] = last.copy(text = merged)
         } else {
             segments.add(MessageSegment(type = type, text = text))
         }
@@ -1002,6 +1094,56 @@ class ChatViewModel @Inject constructor(
 
     private fun contentFromSegments(segments: List<MessageSegment>): String =
         segments.filter { it.type == "content" }.joinToString("") { it.text }
+
+    /** 流式文本合并：模型重发整段时不拼接成双倍内容。 */
+    private fun mergeStreamingText(existing: String, chunk: String): String {
+        if (chunk.isEmpty()) return existing
+        if (existing.isEmpty()) return chunk
+        if (chunk == existing) return existing
+        if (chunk.startsWith(existing)) return chunk
+        if (existing.startsWith(chunk)) return existing
+        if (existing.endsWith(chunk)) return existing
+        return existing + chunk
+    }
+
+    /** 合并连续重复的 content 段（模型偶发整段重发）。 */
+    private fun dedupeContentSegments(segments: MutableList<MessageSegment>) {
+        val merged = mutableListOf<MessageSegment>()
+        for (segment in segments) {
+            if (segment.type == "content" && merged.lastOrNull()?.type == "content") {
+                val prev = merged.last()
+                val combined = mergeStreamingText(prev.text, segment.text)
+                if (combined == prev.text) continue
+                merged[merged.lastIndex] = prev.copy(text = collapseExactDuplicate(combined))
+            } else if (segment.type == "content") {
+                merged.add(segment.copy(text = collapseExactDuplicate(segment.text)))
+            } else {
+                merged.add(segment)
+            }
+        }
+        segments.clear()
+        segments.addAll(merged)
+    }
+
+    /** 正文与思考完全一致时只保留正文，避免同一段出现两次。 */
+    private fun collapseReasoningContentOverlap(segments: MutableList<MessageSegment>) {
+        val reasoning = segments.filter { it.type == "reasoning" }.joinToString("") { it.text }.trim()
+        val content = segments.filter { it.type == "content" }.joinToString("") { it.text }.trim()
+        if (reasoning.isNotBlank() && reasoning == content) {
+            segments.removeAll { it.type == "reasoning" }
+        }
+    }
+
+    private fun collapseExactDuplicate(text: String): String {
+        val trimmed = text.trim()
+        if (trimmed.length < 2 || trimmed.length % 2 != 0) return text
+        val half = trimmed.length / 2
+        return if (trimmed.substring(0, half) == trimmed.substring(half)) {
+            trimmed.substring(0, half)
+        } else {
+            text
+        }
+    }
 
     /**
      * 合并内存消息与服务端列表：优先采用服务端 ID，保留服务端尚未落库的本地消息。
@@ -1092,6 +1234,22 @@ class ChatViewModel @Inject constructor(
         ToolActionStatus.REJECTED -> 0
     }
 
+    private fun applyStreamStatus(phase: String, tool: String? = null) {
+        _streamStatusHint.value = when (phase) {
+            "searching" -> "联网搜索中…"
+            "search_no_results" -> "未找到相关网页"
+            "search_unavailable" -> "联网搜索未启用"
+            "thinking" -> null
+            "tool" -> when (tool) {
+                "web_search" -> "联网搜索中…"
+                "search_notes" -> "正在搜索笔记…"
+                "search_knowledge_bases" -> "正在搜索知识库…"
+                else -> "正在调用工具…"
+            }
+            else -> _streamStatusHint.value
+        }
+    }
+
     /** 写工具已执行成功时，resume 失败不应把卡片改回 FAILED。 */
     private fun appendToolResumeError(pendingId: String, message: String) {
         updateToolAction(pendingId) { item ->
@@ -1166,6 +1324,18 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             chatRepository.saveMessageSearchSources(messageId, sources)
         }
+    }
+
+    private fun mergeSearchSources(
+        existing: List<SearchSource>,
+        incoming: List<SearchSource>,
+    ): List<SearchSource> {
+        val merged = linkedMapOf<String, SearchSource>()
+        for (source in existing + incoming) {
+            val key = source.url.ifBlank { "${source.title}:${source.snippet}" }
+            merged[key] = source
+        }
+        return merged.values.toList()
     }
 
     private suspend fun loadSearchSources(conversationId: String) {

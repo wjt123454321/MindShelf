@@ -16,9 +16,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -34,6 +37,7 @@ import com.example.mindshelf.ui.components.MindShelfTopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,17 +47,39 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.BuildConfig
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import com.example.mindshelf.ui.components.ListSkeleton
+import com.example.mindshelf.ui.components.SyncConflictDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     onLogout: () -> Unit,
     onOpenAiSettings: () -> Unit = {},
+    onOpenTrash: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    androidx.compose.runtime.LaunchedEffect(uiState.syncMessage) {
+        uiState.syncMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearSyncMessage()
+        }
+    }
+
+    uiState.activeConflict?.let { conflict ->
+        SyncConflictDialog(
+            conflict = conflict,
+            onResolveLocal = { viewModel.resolveConflict(conflict, "local") },
+            onResolveRemote = { viewModel.resolveConflict(conflict, "remote") },
+            onDismiss = { },
+        )
+    }
 
     androidx.compose.runtime.LaunchedEffect(uiState.sessionExpired) {
         if (uiState.sessionExpired) onLogout()
@@ -61,6 +87,7 @@ fun ProfileScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             MindShelfTopAppBar(title = { Text("我的") })
         },
@@ -174,19 +201,67 @@ fun ProfileScreen(
                                     color = MaterialTheme.colorScheme.outlineVariant,
                                 )
                                 ProfileListItem(
-                                    icon = Icons.Filled.Info,
-                                    label = "版本",
-                                    value = "MindShelf ${BuildConfig.VERSION_NAME}",
+                                    icon = Icons.Filled.Settings,
+                                    label = "AI 服务",
+                                    value = "内置 / 自定义 API",
+                                    onClick = onOpenAiSettings,
+                                )
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                )
+                                ListItem(
+                                    headlineContent = { Text("云同步", style = MaterialTheme.typography.labelMedium) },
+                                    supportingContent = {
+                                        Text(
+                                            if (uiState.cloudSyncEnabled) "已开启，登录后双向同步" else "仅本地，不同步云端",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    },
+                                    leadingContent = {
+                                        Icon(
+                                            Icons.Filled.Cloud,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    },
+                                    trailingContent = {
+                                        Switch(
+                                            checked = uiState.cloudSyncEnabled,
+                                            onCheckedChange = { viewModel.setCloudSyncEnabled(it) },
+                                        )
+                                    },
+                                )
+                                if (uiState.cloudSyncEnabled) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                    )
+                                    ProfileListItem(
+                                        icon = Icons.Filled.Sync,
+                                        label = "立即同步",
+                                        value = if (uiState.syncing) "同步中…" else "拉取并推送本地变更",
+                                        onClick = { if (!uiState.syncing) viewModel.syncNow() },
+                                    )
+                                }
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                )
+                                ProfileListItem(
+                                    icon = Icons.Filled.Delete,
+                                    label = "回收站",
+                                    value = "已删除内容保留 30 天",
+                                    onClick = onOpenTrash,
                                 )
                                 HorizontalDivider(
                                     modifier = Modifier.padding(horizontal = 16.dp),
                                     color = MaterialTheme.colorScheme.outlineVariant,
                                 )
                                 ProfileListItem(
-                                    icon = Icons.Filled.Settings,
-                                    label = "AI 服务",
-                                    value = "内置 / 自定义 API",
-                                    onClick = onOpenAiSettings,
+                                    icon = Icons.Filled.Info,
+                                    label = "版本",
+                                    value = "MindShelf ${BuildConfig.VERSION_NAME}",
                                 )
                             }
                         }

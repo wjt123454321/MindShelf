@@ -6,6 +6,8 @@ import com.example.mindshelf.data.remote.dto.KnowledgeBaseDto
 import com.example.mindshelf.data.remote.dto.NoteDto
 import com.example.mindshelf.data.repository.KnowledgeRepository
 import com.example.mindshelf.data.repository.NoteRepository
+import com.example.mindshelf.data.repository.VersionRepository
+import com.example.mindshelf.data.repository.ShareRepository
 import com.example.mindshelf.data.sync.NetworkContentSyncObserver
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +22,8 @@ import javax.inject.Inject
 class NotesViewModel @Inject constructor(
     private val noteRepository: NoteRepository,
     private val knowledgeRepository: KnowledgeRepository,
+    private val versionRepository: VersionRepository,
+    private val shareRepository: ShareRepository,
     private val networkContentSyncObserver: NetworkContentSyncObserver,
 ) : ViewModel() {
 
@@ -91,4 +95,17 @@ class NotesViewModel @Inject constructor(
             noteRepository.deleteAll(ids)
         }
     }
+
+    suspend fun loadNoteVersions(noteId: String): Result<List<com.example.mindshelf.data.remote.dto.NoteVersionDto>> =
+        runCatching { versionRepository.listVersions(noteId) }
+
+    fun restoreVersion(noteId: String, versionId: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            versionRepository.restoreVersion(noteId, versionId)
+            _editingNote.value = noteRepository.get(noteId)
+            onDone()
+        }
+    }
+
+    suspend fun createShareLink(noteId: String) = shareRepository.createLink("note", noteId)
 }

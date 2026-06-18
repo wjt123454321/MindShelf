@@ -8,12 +8,14 @@ fun buildBranchPathMessages(
     allMessages: List<MessageDto>,
     branchId: String,
     branches: List<BranchDto>,
+    branchOverride: BranchDto? = null,
 ): List<MessageDto> {
-    if (allMessages.isEmpty()) return emptyList()
-    val byId = allMessages.associateBy { it.id }
     val branchMsgs = allMessages.filter { it.branchId == branchId }.sortedBy { it.createdAt }
-    val branch = branches.find { it.id == branchId } ?: return branchMsgs
+    val branch = branchOverride ?: branches.find { it.id == branchId }
+    if (branch == null) return branchMsgs
+    if (allMessages.isEmpty()) return branchMsgs
 
+    val byId = allMessages.associateBy { it.id }
     val ancestors = mutableListOf<MessageDto>()
     var currentId = branch.rootMessageId
     while (currentId != null) {

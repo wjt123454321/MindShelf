@@ -2,6 +2,7 @@ package com.example.mindshelf.data.repository
 
 import com.example.mindshelf.data.local.TokenStore
 import com.example.mindshelf.data.remote.MindShelfApi
+import com.example.mindshelf.data.sync.SyncCoordinator
 import com.example.mindshelf.data.remote.dto.LoginCodeRequest
 import com.example.mindshelf.data.remote.dto.LoginRequest
 import com.example.mindshelf.data.remote.dto.RefreshRequest
@@ -18,7 +19,7 @@ import javax.inject.Singleton
 class AuthRepository @Inject constructor(
     private val api: MindShelfApi,
     private val tokenStore: TokenStore,
-    private val syncRepository: SyncRepository,
+    private val syncCoordinator: SyncCoordinator,
 ) {
     val isLoggedIn: Flow<String?> = tokenStore.accessToken
 
@@ -107,7 +108,7 @@ class AuthRepository @Inject constructor(
     suspend fun syncIfLoggedIn() {
         if (tokenStore.getAccessToken() != null) {
             try {
-                syncRepository.pullFromRemote()
+                syncCoordinator.syncAll()
             } catch (_: Exception) {
             }
         }
@@ -126,7 +127,7 @@ class AuthRepository @Inject constructor(
 
     private suspend fun syncAfterLogin() {
         try {
-            syncRepository.pullFromRemote()
+            syncCoordinator.afterLogin()
         } catch (_: Exception) {
         }
     }

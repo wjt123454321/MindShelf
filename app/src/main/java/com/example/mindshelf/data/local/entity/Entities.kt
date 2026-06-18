@@ -47,6 +47,7 @@ data class ConversationEntity(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
+    val syncStatus: SyncStatus = SyncStatus.SYNCED,
 )
 
 @Entity(tableName = "branches")
@@ -56,6 +57,7 @@ data class BranchEntity(
     val label: String,
     val rootMessageId: String?,
     val createdAt: Long,
+    val syncStatus: SyncStatus = SyncStatus.SYNCED,
 )
 
 @Entity(tableName = "messages")
@@ -70,6 +72,7 @@ data class MessageEntity(
     val segmentsJson: String = "[]",
     val searchSourcesJson: String = "[]",
     val createdAt: Long,
+    val syncStatus: SyncStatus = SyncStatus.SYNCED,
 )
 
 @Entity(tableName = "ai_providers")

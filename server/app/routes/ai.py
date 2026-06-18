@@ -1,354 +1,100 @@
-"""内置 AI 流式对话。"""
+"""内置 AI：OpenAI 兼容 LLM 代理与联网搜索代理（无服务端工具循环）。"""
 
 import json
 
-from flask import Blueprint, Response, g, request, stream_with_context
+import requests
+from flask import Blueprint, Response, request, stream_with_context
 
 from app.ai import search as search_service
-from app.ai import tools as tool_service
-from app.ai.provider import build_chat_messages, prepare_search_events, resume_after_tool, stream_completion
-from app.extensions import db
-from app.models import Conversation, Message, PendingToolConfirmation
-from app.routes.conversations import _branch_context_messages, _msg_dict
-from app.utils.auth import auth_required, new_id, now_ms
+from app.ai.provider import _ai_cfg, _resolve_model
+from app.utils.auth import auth_required
 from app.utils.responses import err, ok
 
 bp = Blueprint("ai", __name__, url_prefix="/api/v1/ai")
 
 
-def _save_assistant(
-    conv: Conversation,
-    conversation_id: str,
-    branch_id: str,
-    user_msg_id: str,
-    content: str,
-    reasoning: str = "",
-    segments: list | None = None,
-    *,
-    allow_empty: bool = False,
-    message_id: str | None = None,
-) -> Message | None:
-    text = content.strip()
-    has_reasoning = bool(reasoning.strip())
-    has_segments = bool(segments)
-    if not text and not allow_empty and not has_reasoning and not has_segments:
-        return None
+@bp.post("/completions")
+@auth_required
+def completions():
+    """JWT 鉴权下转发至内置 LLM，注入服务端 api_key，SSE 原样透传。"""
+    body = request.get_json(silent=True) or {}
+    if not body.get("messages"):
+        return err("INVALID", "缺少 messages", 400)
 
-    existing_id = message_id
-    assistant = None
-    if existing_id:
-        assistant = Message.query.filter_by(id=existing_id).first()
+    cfg = _ai_cfg()
+    url = f"{cfg['base_url'].rstrip('/')}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {cfg['api_key']}",
+        "Content-Type": "application/json",
+    }
+    payload = dict(body)
+    payload["model"] = _resolve_model(body.get("model"))
 
-    if assistant is None:
-        assistant = Message(
-            id=new_id(),
-            conversation_id=conversation_id,
-            branch_id=branch_id,
-            parent_id=user_msg_id,
-            role="assistant",
+    if payload.get("stream"):
+        def generate():
+            try:
+                with requests.post(
+                    url, headers=headers, json=payload, stream=True, timeout=120
+                ) as resp:
+                    if resp.status_code != 200:
+                        detail = resp.text[:500]
+                        yield f"data: {json.dumps({'error': detail}, ensure_ascii=False)}\n\n"
+                        return
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if line is None:
+                            continue
+                        yield f"{line}\n"
+                    yield "\n"
+            except requests.RequestException as exc:
+                yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
         )
-        db.session.add(assistant)
-    assistant.content = text
-    assistant.reasoning = reasoning.strip()
-    assistant.segments_json = json.dumps(segments or [], ensure_ascii=False)
-    conv.updated_at = now_ms()
-    db.session.commit()
-    return assistant
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    except requests.RequestException as exc:
+        return err("UPSTREAM_ERROR", str(exc), 502)
+    return Response(resp.content, status=resp.status_code, mimetype="application/json")
 
 
-@bp.post("/chat/stream")
+@bp.post("/search")
 @auth_required
-def chat_stream():
+def ai_search():
+    """联网搜索代理，供客户端 web_search 工具调用。"""
     body = request.get_json(silent=True) or {}
-    conversation_id = body.get("conversation_id")
-    branch_id = body.get("branch_id")
-    parent_message_id = body.get("parent_message_id")
-    message = body.get("message") or {}
-    options = body.get("options") or {}
-    enable_tools = bool(options.get("enable_tools"))
-    enable_search = bool(options.get("enable_search"))
-    model = options.get("model")
+    query = (body.get("query") or "").strip()
+    if not query:
+        return err("INVALID", "缺少 query", 400)
+    if not search_service.is_enabled():
+        return err("UNAVAILABLE", "联网搜索未配置或未启用", 503)
 
-    conv = Conversation.query.filter_by(id=conversation_id, user_id=g.user_id).first()
-    if conv is None:
-        return err("NOT_FOUND", "会话不存在", 404)
-
-    user_msg = Message(
-        id=message.get("id") or new_id(),
-        conversation_id=conversation_id,
-        branch_id=branch_id,
-        parent_id=parent_message_id,
-        role="user",
-        content=message.get("content") or "",
-    )
-    user_content = user_msg.content.strip()
-    if conv.title == "新对话" and user_content:
-        conv.title = user_content[:40]
-    db.session.add(user_msg)
-    conv.updated_at = now_ms()
-    db.session.commit()
-
-    history = _branch_context_messages(conversation_id, branch_id)
-
-    def generate():
-        stream_result: dict = {"content": "", "reasoning": "", "segments": []}
-        assistant: Message | None = None
-        partial_assistant_id: str | None = None
-        yield ": connected\n\n"
+    max_results = body.get("max_results")
+    if max_results is not None:
         try:
-            ai_messages = build_chat_messages(
-                history,
-                user_msg.content,
-                enable_search=enable_search and search_service.is_enabled(),
-            )
-            yield _sse("status", {"phase": "thinking"})
-            for event in stream_completion(
-                ai_messages,
-                enable_tools=enable_tools,
-                enable_search=enable_search and search_service.is_enabled(),
-                model=model,
-                conversation_id=conversation_id,
-                branch_id=branch_id,
-                user_message_id=user_msg.id,
-                result=stream_result,
-            ):
-                if event.startswith("event: tool_pending"):
-                    assistant = _save_assistant(
-                        conv,
-                        conversation_id,
-                        branch_id,
-                        user_msg.id,
-                        stream_result.get("content", ""),
-                        stream_result.get("reasoning", ""),
-                        stream_result.get("segments"),
-                        allow_empty=True,
-                        message_id=partial_assistant_id,
-                    )
-                    if assistant is not None:
-                        partial_assistant_id = assistant.id
-                    yield event
-                    if assistant is not None:
-                        yield _sse("message_done", {"message": _msg_dict(assistant)})
-                    return
-                yield event
+            max_results = int(max_results)
+        except (TypeError, ValueError):
+            max_results = None
 
-            full_content = stream_result.get("content", "")
-            full_reasoning = stream_result.get("reasoning", "")
-            segments = stream_result.get("segments", [])
-            assistant = _save_assistant(
-                conv,
-                conversation_id,
-                branch_id,
-                user_msg.id,
-                full_content,
-                full_reasoning,
-                segments,
-                allow_empty=False,
-                message_id=partial_assistant_id,
-            )
-            if assistant is None:
-                yield _sse("error", {"message": "AI 未返回有效内容"})
-                return
-
-            yield _sse("message_done", {"message": _msg_dict(assistant)})
-            yield _sse("done", {"conversation_id": conversation_id, "branch_id": branch_id})
-        except GeneratorExit:
-            pass
-        except Exception as exc:
-            db.session.rollback()
-            yield _sse("error", {"message": str(exc)})
-        finally:
-            full_content = stream_result.get("content", "")
-            full_reasoning = stream_result.get("reasoning", "")
-            segments = stream_result.get("segments", [])
-            if assistant is None and (full_content.strip() or full_reasoning.strip() or segments):
-                try:
-                    assistant = _save_assistant(
-                        conv,
-                        conversation_id,
-                        branch_id,
-                        user_msg.id,
-                        full_content,
-                        full_reasoning,
-                        segments,
-                        allow_empty=True,
-                    )
-                except Exception:
-                    db.session.rollback()
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+    results, context = search_service.gather_search_context(
+        query,
+        max_results=max_results,
+        sort=(body.get("sort") or "").strip() or None,
+        time_range=(body.get("time_range") or "").strip() or None,
     )
-
-
-@bp.post("/tools/resume/stream")
-@auth_required
-def resume_tool_stream():
-    body = request.get_json(silent=True) or {}
-    pending_id = body.get("pending_id")
-    options = body.get("options") or {}
-    enable_tools = bool(options.get("enable_tools", True))
-    enable_search = bool(options.get("enable_search"))
-    model = options.get("model")
-
-    pending = PendingToolConfirmation.query.filter_by(id=pending_id, user_id=g.user_id).first()
-    if pending is None:
-        return err("NOT_FOUND", "待确认操作不存在或已过期", 404)
-    if not pending.executed:
-        return err("INVALID", "请先确认工具操作", 400)
-    if pending.expires_at < now_ms():
-        tool_service.delete_pending(pending)
-        return err("NOT_FOUND", "待确认操作已过期", 404)
-
-    conv = Conversation.query.filter_by(id=pending.conversation_id, user_id=g.user_id).first()
-    if conv is None:
-        return err("NOT_FOUND", "会话不存在", 404)
-
-    existing = (
-        Message.query.filter_by(
-            conversation_id=pending.conversation_id,
-            branch_id=pending.branch_id,
-            parent_id=pending.user_message_id,
-            role="assistant",
-        )
-        .order_by(Message.created_at.desc())
-        .first()
+    return ok(
+        {
+            "query": query,
+            "results": results,
+            "result_count": len(results),
+            "context": context,
+            "context_preview": context[:1500] if context else "",
+        }
     )
-    partial_assistant_id = existing.id if existing else None
-    resume_state = pending
-
-    def generate():
-        stream_result: dict = {"content": "", "reasoning": "", "segments": []}
-        assistant: Message | None = None
-        partial_id = partial_assistant_id
-        yield ": connected\n\n"
-        try:
-            yield _sse("status", {"phase": "thinking"})
-            for event in resume_after_tool(
-                resume_state,
-                enable_tools=enable_tools,
-                enable_search=enable_search,
-                model=model,
-                result=stream_result,
-            ):
-                if event.startswith("event: tool_pending"):
-                    assistant = _save_assistant(
-                        conv,
-                        resume_state.conversation_id,
-                        resume_state.branch_id,
-                        resume_state.user_message_id,
-                        stream_result.get("content", ""),
-                        stream_result.get("reasoning", ""),
-                        stream_result.get("segments"),
-                        allow_empty=True,
-                        message_id=partial_id,
-                    )
-                    if assistant is not None:
-                        partial_id = assistant.id
-                    yield event
-                    if assistant is not None:
-                        yield _sse("message_done", {"message": _msg_dict(assistant)})
-                    return
-                yield event
-
-            full_content = stream_result.get("content", "")
-            full_reasoning = stream_result.get("reasoning", "")
-            segments = stream_result.get("segments", [])
-            assistant = _save_assistant(
-                conv,
-                resume_state.conversation_id,
-                resume_state.branch_id,
-                resume_state.user_message_id,
-                full_content,
-                full_reasoning,
-                segments,
-                allow_empty=True,
-                message_id=partial_id,
-            )
-            if assistant is None:
-                yield _sse("error", {"message": "AI 未返回有效内容"})
-                return
-
-            yield _sse("message_done", {"message": _msg_dict(assistant)})
-            yield _sse(
-                "done",
-                {
-                    "conversation_id": resume_state.conversation_id,
-                    "branch_id": resume_state.branch_id,
-                },
-            )
-        except GeneratorExit:
-            pass
-        except Exception as exc:
-            db.session.rollback()
-            yield _sse("error", {"message": str(exc)})
-        finally:
-            tool_service.delete_pending(resume_state)
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
-
-
-def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-@bp.get("/tools/pending")
-@auth_required
-def list_pending_tools():
-    conversation_id = request.args.get("conversation_id")
-    branch_id = request.args.get("branch_id")
-    if not conversation_id:
-        return err("INVALID", "缺少 conversation_id", 400)
-
-    conv = Conversation.query.filter_by(id=conversation_id, user_id=g.user_id).first()
-    if conv is None:
-        return err("NOT_FOUND", "会话不存在", 404)
-
-    q = PendingToolConfirmation.query.filter_by(
-        user_id=g.user_id,
-        conversation_id=conversation_id,
-        executed=False,
-    )
-    if branch_id:
-        q = q.filter_by(branch_id=branch_id)
-    items = q.order_by(PendingToolConfirmation.created_at).all()
-    now = now_ms()
-    active = []
-    for pending in items:
-        if pending.expires_at < now:
-            tool_service.delete_pending(pending)
-            continue
-        active.append(tool_service.pending_tool_dict(pending))
-    return ok(active)
-
-
-@bp.post("/tools/confirm")
-@auth_required
-def confirm_tool():
-    body = request.get_json(silent=True) or {}
-    pending_id = body.get("pending_id")
-    approved = bool(body.get("approved"))
-
-    pending = PendingToolConfirmation.query.filter_by(id=pending_id, user_id=g.user_id).first()
-    if pending is None:
-        return err("NOT_FOUND", "待确认操作不存在或已过期", 404)
-    if pending.expires_at < now_ms():
-        tool_service.delete_pending(pending)
-        return err("NOT_FOUND", "待确认操作已过期", 404)
-
-    result = tool_service.execute_pending(pending, approved)
-    return ok(result)

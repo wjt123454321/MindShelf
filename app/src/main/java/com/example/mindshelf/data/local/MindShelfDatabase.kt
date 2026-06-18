@@ -38,7 +38,7 @@ class SyncStatusConverter {
         AiProviderEntity::class,
         ToolActionEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(SyncStatusConverter::class)

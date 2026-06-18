@@ -10,6 +10,25 @@ import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 
+/** 修正 AI 输出里表格前缺少空行等常见问题，便于 GFM 解析。 */
+internal fun normalizeMarkdownForRender(markdown: String): String {
+    if (markdown.isBlank()) return markdown
+    val lines = markdown.lines()
+    if (lines.isEmpty()) return markdown
+    val result = mutableListOf<String>()
+    for (line in lines) {
+        val trimmed = line.trim()
+        if (trimmed.startsWith("|") && result.isNotEmpty()) {
+            val prev = result.last().trim()
+            if (prev.isNotEmpty() && !prev.startsWith("|")) {
+                result.add("")
+            }
+        }
+        result.add(line)
+    }
+    return result.joinToString("\n")
+}
+
 @Composable
 fun MarkdownText(
     text: String,
@@ -17,8 +36,9 @@ fun MarkdownText(
     showCursor: Boolean = false,
     textStyle: TextStyle = MaterialTheme.typography.bodyMedium,
 ) {
-    val content = if (showCursor) "$text▍" else text
+    val content = normalizeMarkdownForRender(if (showCursor) "$text▍" else text)
     val colorScheme = MaterialTheme.colorScheme
+    @Suppress("DEPRECATION")
     val colors = markdownColor(
         text = colorScheme.onSurface,
         codeText = colorScheme.onSurfaceVariant,
@@ -27,6 +47,7 @@ fun MarkdownText(
         codeBackground = colorScheme.surfaceVariant,
         inlineCodeBackground = colorScheme.surfaceVariant,
         dividerColor = colorScheme.outlineVariant,
+        tableBackground = colorScheme.surfaceVariant.copy(alpha = 0.35f),
     )
     val typography = markdownTypography(
         h1 = MaterialTheme.typography.headlineMedium,
@@ -41,6 +62,7 @@ fun MarkdownText(
         bullet = textStyle,
         list = textStyle,
         code = MaterialTheme.typography.bodySmall,
+        table = textStyle,
     )
 
     SelectionContainer(modifier = modifier) {

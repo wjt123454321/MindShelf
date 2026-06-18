@@ -1,18 +1,24 @@
 """Flask 应用工厂。"""
 
+import logging
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
 
 from app.config import load_config
 from app.extensions import db
+from app.logging_setup import setup_logging
 from app.routes import register_blueprints
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(config_path: str | None = None) -> Flask:
     app = Flask(__name__)
     cfg = load_config(config_path)
+    log_file = setup_logging(cfg)
+    logger.info("日志已初始化，文件: %s", log_file)
 
     data_dir = Path(__file__).resolve().parent.parent / "data"
     data_dir.mkdir(exist_ok=True)
@@ -33,14 +39,44 @@ def create_app(config_path: str | None = None) -> Flask:
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     db.init_app(app)
     register_blueprints(app)
+    _register_request_logging(app)
 
     with app.app_context():
         from app import models  # noqa: F401
 
         db.create_all()
         _ensure_schema(db)
+        _start_scheduler(app)
 
     return app
+
+
+def _register_request_logging(app: Flask) -> None:
+    @app.after_request
+    def _log_request(response):
+        if request.path.startswith("/api/"):
+            logger.info("%s %s %s", request.method, request.path, response.status_code)
+        return response
+
+
+def _start_scheduler(app: Flask) -> None:
+    """每日清理过期回收站条目。"""
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+
+        from app.services.trash import purge_expired_trash
+
+        scheduler = BackgroundScheduler(daemon=True)
+
+        def _purge():
+            with app.app_context():
+                purge_expired_trash()
+
+        scheduler.add_job(_purge, "interval", hours=24, id="purge_trash")
+        scheduler.start()
+        app.config["TRASH_SCHEDULER"] = scheduler
+    except ImportError:
+        pass
 
 
 def _ensure_schema(database) -> None:

@@ -58,19 +58,28 @@ fun KnowledgeBaseEntity.toDto(noteCount: Int) = KnowledgeBaseDto(
     deletedAt = deletedAt,
 )
 
-fun ConversationDto.toEntity() = ConversationEntity(
+fun ConversationDto.toEntity(status: SyncStatus = SyncStatus.SYNCED) = ConversationEntity(
+    id = id,
+    title = title,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    syncStatus = status,
+)
+
+fun ConversationEntity.toDto() = ConversationDto(
     id = id,
     title = title,
     createdAt = createdAt,
     updatedAt = updatedAt,
 )
 
-fun BranchDto.toEntity() = BranchEntity(
+fun BranchDto.toEntity(status: SyncStatus = SyncStatus.SYNCED) = BranchEntity(
     id = id,
     conversationId = conversationId,
     label = label,
     rootMessageId = rootMessageId,
     createdAt = createdAt,
+    syncStatus = status,
 )
 
 private val segmentListType = object : TypeToken<List<MessageSegment>>() {}.type
@@ -85,7 +94,10 @@ private fun segmentsFromJson(json: String): List<MessageSegment>? {
         ?.takeIf { it.isNotEmpty() }
 }
 
-fun MessageDto.toEntity(searchSourcesJson: String = "[]") = MessageEntity(
+fun MessageDto.toEntity(
+    searchSourcesJson: String = "[]",
+    status: SyncStatus = SyncStatus.SYNCED,
+) = MessageEntity(
     id = id,
     conversationId = conversationId,
     branchId = branchId,
@@ -96,6 +108,7 @@ fun MessageDto.toEntity(searchSourcesJson: String = "[]") = MessageEntity(
     segmentsJson = segmentsToJson(segments),
     searchSourcesJson = searchSourcesJson,
     createdAt = createdAt,
+    syncStatus = status,
 )
 
 fun MessageEntity.toDto() = MessageDto(

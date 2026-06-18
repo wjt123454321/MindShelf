@@ -34,6 +34,24 @@ interface NoteDao {
     )
     suspend fun getPendingSync(): List<NoteEntity>
 
+    @Query("SELECT * FROM notes WHERE deletedAt IS NULL ORDER BY updatedAt DESC")
+    suspend fun getAllActive(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
+    suspend fun getByIdIncludingDeleted(id: String): NoteEntity?
+
+    @Query("SELECT * FROM notes WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    suspend fun getDeleted(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes WHERE deletedAt IS NOT NULL AND syncStatus = 'PENDING_DELETE'")
+    suspend fun getPendingDeletes(): List<NoteEntity>
+
+    @Query("UPDATE notes SET deletedAt = NULL, syncStatus = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun restore(id: String, updatedAt: Long, status: SyncStatus)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun purge(id: String)
+
     @Query("DELETE FROM notes")
     suspend fun deleteAll()
 }
@@ -59,6 +77,24 @@ interface KnowledgeBaseDao {
         "SELECT * FROM knowledge_bases WHERE deletedAt IS NULL AND syncStatus IN ('PENDING_CREATE', 'PENDING_UPDATE')",
     )
     suspend fun getPendingSync(): List<KnowledgeBaseEntity>
+
+    @Query("SELECT * FROM knowledge_bases WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    suspend fun getDeleted(): List<KnowledgeBaseEntity>
+
+    @Query("SELECT * FROM knowledge_bases WHERE deletedAt IS NULL ORDER BY sortOrder, updatedAt DESC")
+    suspend fun getAllActive(): List<KnowledgeBaseEntity>
+
+    @Query("SELECT * FROM knowledge_bases WHERE id = :id LIMIT 1")
+    suspend fun getByIdIncludingDeleted(id: String): KnowledgeBaseEntity?
+
+    @Query("SELECT * FROM knowledge_bases WHERE deletedAt IS NOT NULL AND syncStatus = 'PENDING_DELETE'")
+    suspend fun getPendingDeletes(): List<KnowledgeBaseEntity>
+
+    @Query("UPDATE knowledge_bases SET deletedAt = NULL, syncStatus = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun restore(id: String, updatedAt: Long, status: SyncStatus)
+
+    @Query("DELETE FROM knowledge_bases WHERE id = :id")
+    suspend fun purge(id: String)
 
     @Query("DELETE FROM knowledge_bases")
     suspend fun deleteAll()
@@ -99,11 +135,26 @@ interface ChatDao {
     @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
     suspend fun getConversations(): List<com.example.mindshelf.data.local.entity.ConversationEntity>
 
+    @Query("SELECT * FROM conversations WHERE id = :id LIMIT 1")
+    suspend fun getConversation(id: String): com.example.mindshelf.data.local.entity.ConversationEntity?
+
+    @Query("SELECT * FROM conversations WHERE syncStatus != 'SYNCED'")
+    suspend fun getPendingConversations(): List<com.example.mindshelf.data.local.entity.ConversationEntity>
+
+    @Query("SELECT * FROM branches WHERE syncStatus != 'SYNCED'")
+    suspend fun getPendingBranches(): List<com.example.mindshelf.data.local.entity.BranchEntity>
+
+    @Query("SELECT * FROM messages WHERE syncStatus != 'SYNCED'")
+    suspend fun getPendingMessages(): List<com.example.mindshelf.data.local.entity.MessageEntity>
+
     @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
     suspend fun countMessages(conversationId: String): Int
 
     @Query("SELECT * FROM branches WHERE conversationId = :conversationId ORDER BY createdAt")
     suspend fun getBranches(conversationId: String): List<com.example.mindshelf.data.local.entity.BranchEntity>
+
+    @Query("SELECT * FROM branches WHERE id = :id LIMIT 1")
+    suspend fun getBranch(id: String): com.example.mindshelf.data.local.entity.BranchEntity?
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId AND branchId = :branchId ORDER BY createdAt")
     suspend fun getMessages(conversationId: String, branchId: String): List<com.example.mindshelf.data.local.entity.MessageEntity>

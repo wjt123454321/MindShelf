@@ -268,6 +268,7 @@ def _web_search(args: dict) -> dict:
         "query": query,
         "results": results,
         "result_count": len(results),
+        "context": context,
         "context_preview": context[:1500] if context else "",
     }
 
