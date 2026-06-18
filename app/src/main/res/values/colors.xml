@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ink_blue">#FF1E5AA8</color>
+    <color name="ink_blue_dark">#FF0D3D7A</color>
+    <color name="sage_green">#FF2E7D6B</color>
+    <color name="canvas_light">#FFF7F8FA</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

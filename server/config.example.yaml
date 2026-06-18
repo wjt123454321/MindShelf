@@ -1,0 +1,44 @@
+# 复制为 config.yaml 并填写真实值；勿提交 config.yaml
+
+ai:
+  base_url: "https://api.deepseek.com"
+  api_key: "your-api-key"
+  model: "deepseek-v4-flash"
+  models:
+    - "deepseek-v4-flash"
+    - "deepseek-v4-pro"
+
+smtp:
+  host: "smtp.qq.com"
+  port: 465
+  user: "your@qq.com"
+  password: "your-smtp-auth-code"
+
+jwt:
+  secret: "change-me-to-random-string"
+  access_ttl: 900      # 15 分钟
+  refresh_ttl: 2592000 # 30 天
+
+database:
+  url: "sqlite:///data/mindshelf.db"
+
+share:
+  base_url: "http://localhost:5000"
+
+trash:
+  retention_days: 30
+
+search:
+  enabled: true
+  # provider: uapi | duckduckgo | ddg_api
+  provider: uapi
+  api_key: "your-uapi-key"
+  api_url: "https://uapis.cn/api/v1/search/aggregate"
+  max_results: 5
+  fetch_pages: false     # uapi 下对应 fetch_full；true 更准但更慢
+  sort: relevance        # relevance | date
+  # time_range: week     # 可选 day | week | month | year
+  max_fetch_pages: 2     # duckduckgo 抓取网页时使用
+  page_max_chars: 2500
+  search_timeout: 30
+  page_timeout: 8
