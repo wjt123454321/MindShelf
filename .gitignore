@@ -21,6 +21,15 @@ server/config.yaml
 server/data/
 server/logs/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Kotlin daemon
+.kotlin/
+
 # JVM / Gradle 崩溃诊断（非应用日志）
 logs/*
 !logs/.gitkeep
