@@ -53,7 +53,7 @@ fun ShareLinkDialog(
                     error != null -> Text(error!!, color = MaterialTheme.colorScheme.error)
                     link != null -> {
                         Text(
-                            "持有链接者可只读访问，你可随时撤销。",
+                            "持有链接者可在浏览器只读查看，你可随时撤销。",
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(bottom = 8.dp),
                         )

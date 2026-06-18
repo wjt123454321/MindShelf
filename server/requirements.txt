@@ -7,3 +7,5 @@ pyjwt>=2.8
 bcrypt>=4.1
 requests>=2.31
 apscheduler>=3.10
+markdown>=3.5
+bleach>=6.0

@@ -1,25 +1,41 @@
 """公开分享链接。"""
 
 import secrets
+from urllib.parse import urlparse
 
 from flask import Blueprint, current_app, g, request
 
 from app.extensions import db
 from app.models import KnowledgeBase, Note, NoteKb, ShareLink
 from app.routes.notes import _note_dict
+from app.services.share_page import render_share_not_found, render_share_page
 from app.utils.auth import auth_required, new_id, now_ms
 from app.utils.responses import err, ok
 
 bp = Blueprint("share", __name__, url_prefix="/api/v1/share")
 public_bp = Blueprint("public_share", __name__)
 
+_LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _is_localhost_url(url: str) -> bool:
+    if not url:
+        return True
+    host = urlparse(url).hostname or ""
+    return host.lower() in _LOCALHOST_HOSTS
+
 
 def _share_base_url() -> str:
+    """分享链接前缀：优先配置的非 localhost 地址，否则用当前请求的 Host。"""
     cfg = current_app.config.get("MINDSHELF_CONFIG", {})
-    base = cfg.get("share", {}).get("base_url", "").rstrip("/")
-    if base:
-        return base
-    return request.host_url.rstrip("/")
+    configured = cfg.get("share", {}).get("base_url", "").rstrip("/")
+    request_base = request.host_url.rstrip("/")
+
+    if configured and not _is_localhost_url(configured):
+        return configured
+    if not _is_localhost_url(request_base):
+        return request_base
+    return configured or request_base
 
 
 def _link_dict(link: ShareLink) -> dict:
@@ -27,12 +43,59 @@ def _link_dict(link: ShareLink) -> dict:
     return {
         "id": link.id,
         "token": link.token,
-        "url": f"{base}/api/v1/s/{link.token}",
+        "url": f"{base}/s/{link.token}",
         "resource_type": link.resource_type,
         "resource_id": link.resource_id,
         "revoked": link.revoked,
         "created_at": link.created_at,
     }
+
+
+def _wants_json() -> bool:
+    accept = request.headers.get("Accept", "")
+    return "application/json" in accept and "text/html" not in accept.split(",")[0]
+
+
+def _load_share_payload(token: str) -> dict | None:
+    link = ShareLink.query.filter_by(token=token, revoked=False).first()
+    if link is None:
+        return None
+
+    if link.resource_type == "note":
+        note = Note.query.filter_by(
+            id=link.resource_id, user_id=link.user_id, deleted_at=None
+        ).first()
+        if note is None:
+            return None
+        return {
+            "resource_type": "note",
+            "snapshot": {"title": note.title, "content": note.content},
+            "shared_at": link.created_at,
+        }
+
+    if link.resource_type == "knowledge_base":
+        kb = KnowledgeBase.query.filter_by(
+            id=link.resource_id, user_id=link.user_id, deleted_at=None
+        ).first()
+        if kb is None:
+            return None
+        notes = (
+            Note.query.join(NoteKb, Note.id == NoteKb.note_id)
+            .filter(NoteKb.kb_id == kb.id, Note.deleted_at.is_(None))
+            .order_by(Note.updated_at.desc())
+            .all()
+        )
+        return {
+            "resource_type": "knowledge_base",
+            "snapshot": {
+                "name": kb.name,
+                "description": kb.description,
+                "notes": [_note_dict(n) for n in notes],
+            },
+            "shared_at": link.created_at,
+        }
+
+    return None
 
 
 def _get_owned_resource(user_id: str, resource_type: str, resource_id: str):
@@ -105,48 +168,14 @@ def revoke_link(link_id: str):
     return "", 204
 
 
-@public_bp.get("/api/v1/s/<token>")
+@public_bp.get("/s/<token>")
 def public_view(token: str):
-    link = ShareLink.query.filter_by(token=token, revoked=False).first()
-    if link is None:
-        return err("NOT_FOUND", "链接不存在或已撤销", 404)
+    payload = _load_share_payload(token)
+    if payload is None:
+        if _wants_json():
+            return err("NOT_FOUND", "链接不存在或已撤销", 404)
+        return render_share_not_found(), 404, {"Content-Type": "text/html; charset=utf-8"}
 
-    if link.resource_type == "note":
-        note = Note.query.filter_by(
-            id=link.resource_id, user_id=link.user_id, deleted_at=None
-        ).first()
-        if note is None:
-            return err("NOT_FOUND", "内容不存在", 404)
-        return ok(
-            {
-                "resource_type": "note",
-                "snapshot": {"title": note.title, "content": note.content},
-                "shared_at": link.created_at,
-            }
-        )
-
-    if link.resource_type == "knowledge_base":
-        kb = KnowledgeBase.query.filter_by(
-            id=link.resource_id, user_id=link.user_id, deleted_at=None
-        ).first()
-        if kb is None:
-            return err("NOT_FOUND", "内容不存在", 404)
-        notes = (
-            Note.query.join(NoteKb, Note.id == NoteKb.note_id)
-            .filter(NoteKb.kb_id == kb.id, Note.deleted_at.is_(None))
-            .order_by(Note.updated_at.desc())
-            .all()
-        )
-        return ok(
-            {
-                "resource_type": "knowledge_base",
-                "snapshot": {
-                    "name": kb.name,
-                    "description": kb.description,
-                    "notes": [_note_dict(n) for n in notes],
-                },
-                "shared_at": link.created_at,
-            }
-        )
-
-    return err("NOT_FOUND", "链接不存在或已撤销", 404)
+    if _wants_json():
+        return ok(payload)
+    return render_share_page(payload), 200, {"Content-Type": "text/html; charset=utf-8"}

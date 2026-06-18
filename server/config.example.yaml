@@ -23,7 +23,8 @@ database:
   url: "sqlite:///data/mindshelf.db"
 
 share:
-  base_url: "http://localhost:5000"
+  # 分享链接对外地址（局域网 IP 或公网域名；勿用 localhost，否则他人无法打开）
+  base_url: "http://10.29.56.31:5000"
 
 trash:
   retention_days: 30
