@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from flask import current_app
 
 from app.extensions import db
-from app.models import KnowledgeBase, Note, NoteVersion, ShareLink
+from app.models import KnowledgeBase, Note, NoteVersion, ShareLink, CustomPage
 
 
 def retention_ms() -> int:
@@ -38,6 +38,14 @@ def purge_expired_trash() -> int:
     for kb in expired_kbs:
         ShareLink.query.filter_by(resource_type="knowledge_base", resource_id=kb.id).delete()
         db.session.delete(kb)
+        removed += 1
+
+    expired_pages = CustomPage.query.filter(
+        CustomPage.deleted_at.isnot(None), CustomPage.deleted_at < cutoff
+    ).all()
+    for page in expired_pages:
+        ShareLink.query.filter_by(resource_type="page", resource_id=page.id).delete()
+        db.session.delete(page)
         removed += 1
 
     if removed:

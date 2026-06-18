@@ -4,7 +4,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 
 object ToolSchemas {
-    private val WRITE_TOOLS = setOf("mutate_knowledge_base", "mutate_note")
+    private val WRITE_TOOLS = setOf("mutate_knowledge_base", "mutate_note", "mutate_custom_page")
 
     fun isWriteTool(name: String): Boolean = name in WRITE_TOOLS
 
@@ -12,8 +12,10 @@ object ToolSchemas {
         val list = JsonArray()
         list.add(searchKbSchema())
         list.add(searchNotesSchema())
+        list.add(searchCustomPagesSchema())
         list.add(mutateKbSchema())
         list.add(mutateNoteSchema())
+        list.add(mutateCustomPageSchema())
         if (includeWebSearch) list.add(webSearchSchema())
         return list
     }
@@ -38,6 +40,18 @@ object ToolSchemas {
                 add("query", prop("string", "标题或正文关键词"))
                 add("note_id", prop("string", "指定笔记 ID 时返回全文"))
                 add("kb_id", prop("string", "限定在某个知识库内搜索"))
+            })
+        },
+    )
+
+    private fun searchCustomPagesSchema(): JsonObject = functionSchema(
+        "search_custom_pages",
+        "搜索或读取用户自定义页面（含 schema_json 与 data_bindings）",
+        JsonObject().apply {
+            add("type", gsonPrimitive("object"))
+            add("properties", JsonObject().apply {
+                add("query", prop("string", "页面名称关键词"))
+                add("page_id", prop("string", "指定页面 ID 时返回完整 schema 与 bindings"))
             })
         },
     )
@@ -70,6 +84,32 @@ object ToolSchemas {
                 add("knowledge_base_ids", JsonObject().apply {
                     add("type", gsonPrimitive("array"))
                     add("items", JsonObject().apply { add("type", gsonPrimitive("string")) })
+                })
+            })
+            add("required", JsonArray().apply { add("action") })
+        },
+    )
+
+    private fun mutateCustomPageSchema(): JsonObject = functionSchema(
+        "mutate_custom_page",
+        CustomPageToolGuide.toolDescription(),
+        JsonObject().apply {
+            add("type", gsonPrimitive("object"))
+            add("properties", JsonObject().apply {
+                add("action", prop("string", "create/update/delete"))
+                add("page_id", prop("string", ""))
+                add("name", prop("string", "页面名称"))
+                add("schema_json", JsonObject().apply {
+                    add("type", gsonPrimitive("object"))
+                    add("description", gsonPrimitive("页面组件树，version=1"))
+                })
+                add("data_bindings", JsonObject().apply {
+                    add("type", gsonPrimitive("object"))
+                    add("description", gsonPrimitive("checklist/note/table 数据绑定"))
+                })
+                add("pinned", JsonObject().apply {
+                    add("type", gsonPrimitive("boolean"))
+                    add("description", gsonPrimitive("是否固定到底栏，全局最多 1 个"))
                 })
             })
             add("required", JsonArray().apply { add("action") })

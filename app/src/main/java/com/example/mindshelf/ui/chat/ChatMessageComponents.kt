@@ -768,7 +768,44 @@ fun ToolActionCard(
 }
 
 @Composable
+private fun PageToolPreview(preview: ToolPreview) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            when (preview.action) {
+                "create" -> "将创建自定义页面"
+                "update" -> "页面变更预览"
+                "delete" -> "将删除自定义页面"
+                else -> "页面操作预览"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = if (preview.action == "delete") {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        preview.name?.takeIf { it.isNotBlank() }?.let {
+            PreviewField(label = "名称", value = it, highlight = preview.action != "delete")
+        }
+        preview.schemaSummary?.takeIf { it.isNotBlank() }?.let {
+            PreviewField(label = "组件", value = it, highlight = preview.action == "create")
+        }
+        preview.pinned?.takeIf { it }?.let {
+            Text(
+                "将固定到底栏",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ToolPreviewContent(preview: ToolPreview) {
+    if (preview.pageId != null || preview.schemaSummary != null) {
+        PageToolPreview(preview)
+        return
+    }
     when (preview.action) {
         "create" -> preview.after?.let {
             CreatePreview(snapshot = it, isNote = it.title != null || preview.noteId != null)
@@ -963,6 +1000,7 @@ private fun toolActionTitle(tool: String, preview: ToolPreview): String {
     val target = when (tool) {
         "mutate_note" -> "笔记"
         "mutate_knowledge_base" -> "知识库"
+        "mutate_custom_page" -> "自定义页面"
         else -> "内容"
     }
     return when (preview.action) {

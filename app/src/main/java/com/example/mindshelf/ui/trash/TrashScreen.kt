@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Note
@@ -109,7 +110,7 @@ fun TrashScreen(
                     EmptyState(
                         icon = Icons.Default.DeleteForever,
                         title = "回收站为空",
-                        subtitle = "删除的笔记与知识库会保留 30 天",
+                        subtitle = "删除的笔记、知识库与页面会保留 30 天",
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -136,8 +137,10 @@ private fun TrashItemCard(
     onPurge: () -> Unit,
 ) {
     val isNote = item.entityType == "note"
+    val isPage = item.entityType == "page"
     val title = when {
         isNote -> item.entity["title"]?.toString().orEmpty().ifBlank { "无标题笔记" }
+        isPage -> item.entity["name"]?.toString().orEmpty().ifBlank { "自定义页面" }
         else -> item.entity["name"]?.toString().orEmpty().ifBlank { "知识库" }
     }
     val daysLeft = TimeUnit.MILLISECONDS.toDays(item.expiresAt - System.currentTimeMillis()).coerceAtLeast(0)
@@ -153,9 +156,17 @@ private fun TrashItemCard(
     ) {
         Column(Modifier.padding(16.dp)) {
             Icon(
-                if (isNote) Icons.Default.Note else Icons.Default.Folder,
+                when {
+                    isNote -> Icons.Default.Note
+                    isPage -> Icons.Default.Dashboard
+                    else -> Icons.Default.Folder
+                },
                 contentDescription = null,
-                tint = if (isNote) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                tint = when {
+                    isNote -> MaterialTheme.colorScheme.tertiary
+                    isPage -> MaterialTheme.colorScheme.secondary
+                    else -> MaterialTheme.colorScheme.primary
+                },
             )
             Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
             Text(

@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import com.example.mindshelf.data.local.entity.CustomPageEntity
 import com.example.mindshelf.data.local.entity.KnowledgeBaseEntity
 import com.example.mindshelf.data.local.entity.NoteEntity
 import com.example.mindshelf.data.local.entity.NoteKbCrossRef
@@ -223,6 +224,56 @@ data class MessageSearchSourceRow(
     val id: String,
     val searchSourcesJson: String,
 )
+
+@Dao
+interface PageDao {
+    @Query("SELECT * FROM custom_pages WHERE deletedAt IS NULL ORDER BY updatedAt DESC")
+    fun observeActive(): Flow<List<CustomPageEntity>>
+
+    @Query("SELECT * FROM custom_pages WHERE deletedAt IS NULL AND pinned = 1 LIMIT 1")
+    fun observePinned(): Flow<CustomPageEntity?>
+
+    @Query("SELECT * FROM custom_pages WHERE id = :id AND deletedAt IS NULL LIMIT 1")
+    suspend fun getById(id: String): CustomPageEntity?
+
+    @Query("SELECT * FROM custom_pages WHERE deletedAt IS NULL ORDER BY updatedAt DESC")
+    suspend fun getAllActive(): List<CustomPageEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(page: CustomPageEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(pages: List<CustomPageEntity>)
+
+    @Query("UPDATE custom_pages SET deletedAt = :deletedAt, syncStatus = :status, updatedAt = :updatedAt, pinned = 0 WHERE id = :id")
+    suspend fun markDeleted(id: String, deletedAt: Long, updatedAt: Long, status: SyncStatus)
+
+    @Query(
+        "SELECT * FROM custom_pages WHERE deletedAt IS NULL AND syncStatus IN ('PENDING_CREATE', 'PENDING_UPDATE')",
+    )
+    suspend fun getPendingSync(): List<CustomPageEntity>
+
+    @Query("SELECT * FROM custom_pages WHERE deletedAt IS NOT NULL AND syncStatus = 'PENDING_DELETE'")
+    suspend fun getPendingDeletes(): List<CustomPageEntity>
+
+    @Query("SELECT * FROM custom_pages WHERE id = :id LIMIT 1")
+    suspend fun getByIdIncludingDeleted(id: String): CustomPageEntity?
+
+    @Query("SELECT * FROM custom_pages WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    suspend fun getDeleted(): List<CustomPageEntity>
+
+    @Query("UPDATE custom_pages SET deletedAt = NULL, syncStatus = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun restore(id: String, updatedAt: Long, status: SyncStatus)
+
+    @Query("UPDATE custom_pages SET pinned = 0 WHERE pinned = 1 AND id != :exceptId AND deletedAt IS NULL")
+    suspend fun clearOtherPins(exceptId: String)
+
+    @Query("DELETE FROM custom_pages WHERE id = :id")
+    suspend fun purge(id: String)
+
+    @Query("DELETE FROM custom_pages")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface AiProviderDao {

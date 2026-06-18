@@ -45,6 +45,7 @@ data class SyncPullData(
     val conversations: List<ConversationDto> = emptyList(),
     val branches: List<BranchDto> = emptyList(),
     val messages: List<MessageDto> = emptyList(),
+    val pages: List<CustomPageDto> = emptyList(),
     val tombstones: List<TombstoneDto>,
 )
 
@@ -66,6 +67,7 @@ data class SyncPushRequest(
     val conversations: List<SyncConversationPushItem> = emptyList(),
     val branches: List<SyncBranchPushItem> = emptyList(),
     val messages: List<SyncMessagePushItem> = emptyList(),
+    val pages: List<SyncPagePushItem> = emptyList(),
     val deletes: List<TombstoneDto> = emptyList(),
 )
 

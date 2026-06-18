@@ -8,6 +8,9 @@ import com.example.mindshelf.data.remote.dto.CreateBranchRequest
 import com.example.mindshelf.data.remote.dto.CreateConversationRequest
 import com.example.mindshelf.data.remote.dto.CreateKbRequest
 import com.example.mindshelf.data.remote.dto.CreateNoteRequest
+import com.example.mindshelf.data.remote.dto.CreatePageRequest
+import com.example.mindshelf.data.remote.dto.CustomPageDto
+import com.example.mindshelf.data.remote.dto.UpdatePageRequest
 import com.example.mindshelf.data.remote.dto.KnowledgeBaseDto
 import com.example.mindshelf.data.remote.dto.LoginCodeRequest
 import com.example.mindshelf.data.remote.dto.LoginRequest
@@ -85,6 +88,21 @@ interface MindShelfApi {
 
     @DELETE("knowledge-bases/{id}")
     suspend fun deleteKnowledgeBase(@Path("id") id: String)
+
+    @GET("pages")
+    suspend fun listPages(): ApiResponse<List<CustomPageDto>>
+
+    @POST("pages")
+    suspend fun createPage(@Body body: CreatePageRequest): ApiResponse<CustomPageDto>
+
+    @GET("pages/{id}")
+    suspend fun getPage(@Path("id") id: String): ApiResponse<CustomPageDto>
+
+    @PATCH("pages/{id}")
+    suspend fun updatePage(@Path("id") id: String, @Body body: UpdatePageRequest): ApiResponse<CustomPageDto>
+
+    @DELETE("pages/{id}")
+    suspend fun deletePage(@Path("id") id: String)
 
     @GET("conversations")
     suspend fun listConversations(): ApiResponse<List<ConversationDto>>

@@ -4,11 +4,13 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import com.example.mindshelf.data.local.entity.CustomPageEntity
 import com.example.mindshelf.data.local.dao.AiProviderDao
 import com.example.mindshelf.data.local.dao.ChatDao
 import com.example.mindshelf.data.local.dao.KnowledgeBaseDao
 import com.example.mindshelf.data.local.dao.NoteDao
 import com.example.mindshelf.data.local.dao.NoteKbDao
+import com.example.mindshelf.data.local.dao.PageDao
 import com.example.mindshelf.data.local.entity.AiProviderEntity
 import com.example.mindshelf.data.local.entity.BranchEntity
 import com.example.mindshelf.data.local.entity.ConversationEntity
@@ -37,8 +39,9 @@ class SyncStatusConverter {
         MessageEntity::class,
         AiProviderEntity::class,
         ToolActionEntity::class,
+        CustomPageEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 @TypeConverters(SyncStatusConverter::class)
@@ -48,4 +51,5 @@ abstract class MindShelfDatabase : RoomDatabase() {
     abstract fun noteKbDao(): NoteKbDao
     abstract fun chatDao(): ChatDao
     abstract fun aiProviderDao(): AiProviderDao
+    abstract fun pageDao(): PageDao
 }

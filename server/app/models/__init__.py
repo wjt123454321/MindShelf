@@ -158,3 +158,17 @@ class PendingToolConfirmation(db.Model):
     tool_result_json = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.BigInteger, nullable=False, default=_now_ms)
     expires_at = db.Column(db.BigInteger, nullable=False)
+
+
+class CustomPage(db.Model):
+    __tablename__ = "custom_pages"
+
+    id = db.Column(db.String(36), primary_key=True, default=_uuid)
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+    name = db.Column(db.String(255), nullable=False, default="新页面")
+    schema_json = db.Column(db.Text, nullable=False, default="{}")
+    data_bindings = db.Column(db.Text, nullable=False, default="{}")
+    pinned = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.BigInteger, nullable=False, default=_now_ms)
+    updated_at = db.Column(db.BigInteger, nullable=False, default=_now_ms, onupdate=_now_ms)
+    deleted_at = db.Column(db.BigInteger, nullable=True)

@@ -1,6 +1,8 @@
 package com.example.mindshelf.data.local
 
 import com.example.mindshelf.data.local.entity.BranchEntity
+import com.example.mindshelf.data.local.entity.CustomPageEntity
+import com.example.mindshelf.data.remote.dto.CustomPageDto
 import com.example.mindshelf.data.local.entity.ConversationEntity
 import com.example.mindshelf.data.local.entity.KnowledgeBaseEntity
 import com.example.mindshelf.data.local.entity.MessageEntity
@@ -83,7 +85,38 @@ fun BranchDto.toEntity(status: SyncStatus = SyncStatus.SYNCED) = BranchEntity(
 )
 
 private val segmentListType = object : TypeToken<List<MessageSegment>>() {}.type
+private val mapType = object : TypeToken<Map<String, Any?>>() {}.type
 private val gson = Gson()
+
+fun mapToJson(map: Map<String, Any?>): String = gson.toJson(map)
+
+fun jsonToMap(json: String): Map<String, Any?> {
+    if (json.isBlank() || json == "{}") return emptyMap()
+    return runCatching { gson.fromJson<Map<String, Any?>>(json, mapType) }.getOrDefault(emptyMap())
+}
+
+fun CustomPageDto.toEntity(status: SyncStatus = SyncStatus.SYNCED) = CustomPageEntity(
+    id = id,
+    name = name,
+    schemaJson = mapToJson(schemaJson),
+    dataBindings = mapToJson(dataBindings),
+    pinned = pinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    deletedAt = deletedAt,
+    syncStatus = status,
+)
+
+fun CustomPageEntity.toDto() = CustomPageDto(
+    id = id,
+    name = name,
+    schemaJson = jsonToMap(schemaJson),
+    dataBindings = jsonToMap(dataBindings),
+    pinned = pinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+    deletedAt = deletedAt,
+)
 
 private fun segmentsToJson(segments: List<MessageSegment>?): String =
     gson.toJson(segments.orEmpty())

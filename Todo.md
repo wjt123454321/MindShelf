@@ -23,6 +23,11 @@
 - [x] 架构重构：服务端 LLM 纯代理；废弃服务端工具执行
 - [ ] 版本对比（VER-03，可后续迭代）
 
-## Phase 4 — 待开始
-- AI 创建/修改自定义页面
-- 页面数据绑定与底栏固定
+## Phase 4 — 自定义页面
+- [x] 文档：architecture §9 / api §7 schema 契约
+- [x] 服务端：CustomPage 模型 + `/pages` CRUD + pinned 互斥
+- [x] 服务端：sync pull/push pages + 回收站 + 分享 page HTML
+- [x] 客户端：Room + PageRepository + SyncEngine
+- [x] 客户端：PageSchemaValidator + PageRenderer + 5 种组件
+- [x] 客户端：dynamic_pinned 底栏 + PagesListScreen
+- [x] 客户端：`mutate_custom_page` 工具链

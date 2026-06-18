@@ -292,10 +292,13 @@ AI 可通过工具扩展能力，对用户数据进行读写操作。
 
 ### Phase 4 — 自定义页面
 
-- AI 创建/修改页面
-- 页面数据绑定（笔记/数据库）
-- 底栏固定与页面分享
-- *渲染技术选型在架构设计阶段确定*
+- AI 通过 `search_custom_pages` 读取、`mutate_custom_page` 创建/修改页面 schema 与 data_bindings
+- 用户编辑：默认阅读模式；TopBar「编辑」进入编辑（文本/待办/表格）；待办勾选阅读模式下可用；NoteEmbed 点击跳转笔记编辑
+- 内容统一存于 `data_bindings`（含 `kind: text`）；`schema_json` 仅描述布局
+- **底栏策略（dynamic_pinned）**：默认 4 Tab；存在 `pinned=true` 页面时插入第 5 Tab（页面名），最多 1 个 pinned
+- 未固定页面入口：「我的」→「自定义页面」列表
+- 公开分享只读页（`resource_type=page`）
+- 云同步 LWW on `updated_at`；回收站 30 天保留
 
 ---
 
@@ -316,11 +319,12 @@ AI 可通过工具扩展能力，对用户数据进行读写操作。
 | 自定义 API | 本机加密离线保存，客户端直连；不上云、不同步 |
 | 验证码 | SMTP 发送，配置文件管理；当前使用 QQ 邮箱 |
 | 语音交互 | 支持语音输入（STT）与语音回答（TTS） |
-| 自定义页面渲染 | 需求阶段不讨论；架构设计阶段再选型 |
+| 自定义页面渲染 | Schema 驱动 Compose 组件库（见 architecture §9） |
+| 底栏 pinned | dynamic_pinned：最多 1 个 pinned 页作为第 5 Tab |
 
 ## 8. 待确认事项
 
-需求分析阶段暂无待确认项。后续架构设计阶段将单独处理自定义页面的渲染技术选型。
+需求分析阶段暂无待确认项。
 
 ---
 

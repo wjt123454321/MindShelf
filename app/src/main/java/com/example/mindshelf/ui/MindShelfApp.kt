@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Note
 import androidx.compose.material.icons.filled.Person
@@ -16,7 +17,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,6 +43,8 @@ import com.example.mindshelf.ui.knowledge.KnowledgeScreen
 import com.example.mindshelf.ui.notes.NoteEditScreen
 import com.example.mindshelf.ui.notes.NoteVersionsScreen
 import com.example.mindshelf.ui.notes.NotesScreen
+import com.example.mindshelf.ui.pages.CustomPageScreen
+import com.example.mindshelf.ui.pages.PagesListScreen
 import com.example.mindshelf.ui.profile.ProfileScreen
 import com.example.mindshelf.ui.settings.AiSettingsScreen
 import com.example.mindshelf.ui.trash.TrashScreen
@@ -49,11 +52,13 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-private val mainRoutes = setOf("chat", "knowledge", "notes", "profile", "chat_list", "kb_detail/{kbId}/{kbName}")
-
 @Composable
-fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
+fun MindShelfApp(
+    authViewModel: AuthViewModel = hiltViewModel(),
+    navViewModel: AppNavViewModel = hiltViewModel(),
+) {
     val authState by authViewModel.uiState.collectAsStateWithLifecycle()
+    val pinnedPage by navViewModel.pinnedPage.collectAsStateWithLifecycle()
 
     if (authState.checkingSession) {
         Box(
@@ -68,19 +73,28 @@ fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route.orEmpty()
-    val showBottomBar = route in mainRoutes ||
-        route.startsWith("kb_detail")
+    val hasPinnedTab = pinnedPage != null
+    val profileTabIndex = if (hasPinnedTab) 4 else 3
+    val pinnedTabIndex = 3
+
+    val pageId = backStack?.arguments?.getString("pageId")
+    val isOnCustomPage = pageId != null
+
+    val showBottomBar = route in setOf(
+        "chat", "knowledge", "notes", "profile", "chat_list", "pages_list",
+    ) || route.startsWith("kb_detail") || isOnCustomPage
 
     val currentTab = when {
+        isOnCustomPage && hasPinnedTab && pageId == pinnedPage?.id -> pinnedTabIndex
+        isOnCustomPage -> profileTabIndex
         route.contains("knowledge") || route.startsWith("kb_detail") -> 1
         route.contains("notes") || route.startsWith("note_edit") -> 2
-        route.contains("profile") -> 3
+        route.contains("profile") || route == "pages_list" || route == "trash" || route == "ai_settings" -> profileTabIndex
         else -> 0
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        // 各子页面 Scaffold / TopAppBar 已处理状态栏 inset，此处仅保留底栏与导航条 inset，避免顶部双重留白
         contentWindowInsets = ScaffoldDefaults.contentWindowInsets.only(
             WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal,
         ),
@@ -135,8 +149,33 @@ fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
                         label = { Text("笔记", style = MaterialTheme.typography.labelSmall) },
                         colors = navItemColors(),
                     )
+                    if (hasPinnedTab) {
+                        val page = pinnedPage!!
+                        NavigationBarItem(
+                            selected = currentTab == pinnedTabIndex,
+                            onClick = {
+                                navController.navigate("page/${page.id}") { launchSingleTop = true }
+                            },
+                            icon = {
+                                Icon(
+                                    Icons.Default.Dashboard,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            },
+                            label = {
+                                Text(
+                                    page.name,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            colors = navItemColors(),
+                        )
+                    }
                     NavigationBarItem(
-                        selected = currentTab == 3,
+                        selected = currentTab == profileTabIndex,
                         onClick = { navController.navigate("profile") { launchSingleTop = true } },
                         icon = {
                             Icon(
@@ -240,6 +279,25 @@ fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
                         onBack = { navController.popBackStack() },
                     )
                 }
+                composable(
+                    "page/{pageId}",
+                    arguments = listOf(navArgument("pageId") { type = NavType.StringType }),
+                ) { entry ->
+                    val pageId = entry.arguments?.getString("pageId")!!
+                    CustomPageScreen(
+                        pageId = pageId,
+                        onBack = { navController.popBackStack() },
+                        onOpenNote = { noteId -> navController.navigate("note_edit/$noteId") },
+                    )
+                }
+                composable("pages_list") {
+                    PagesListScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenPage = { pageId ->
+                            navController.navigate("page/$pageId")
+                        },
+                    )
+                }
                 composable("profile") {
                     ProfileScreen(
                         onLogout = {
@@ -249,6 +307,7 @@ fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
                         },
                         onOpenAiSettings = { navController.navigate("ai_settings") },
                         onOpenTrash = { navController.navigate("trash") },
+                        onOpenPages = { navController.navigate("pages_list") },
                     )
                 }
                 composable("trash") {
@@ -263,7 +322,7 @@ fun MindShelfApp(authViewModel: AuthViewModel = hiltViewModel()) {
 }
 
 @Composable
-private fun navItemColors() = NavigationBarItemDefaults.colors(
+private fun navItemColors() = androidx.compose.material3.NavigationBarItemDefaults.colors(
     selectedIconColor = MaterialTheme.colorScheme.primary,
     selectedTextColor = MaterialTheme.colorScheme.primary,
     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,

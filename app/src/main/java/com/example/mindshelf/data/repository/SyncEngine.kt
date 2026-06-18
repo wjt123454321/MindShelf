@@ -5,6 +5,7 @@ import com.example.mindshelf.data.local.dao.ChatDao
 import com.example.mindshelf.data.local.dao.KnowledgeBaseDao
 import com.example.mindshelf.data.local.dao.NoteDao
 import com.example.mindshelf.data.local.dao.NoteKbDao
+import com.example.mindshelf.data.local.dao.PageDao
 import com.example.mindshelf.data.local.entity.SyncStatus
 import com.example.mindshelf.data.local.kbLinks
 import com.example.mindshelf.data.local.toDto
@@ -16,6 +17,7 @@ import com.example.mindshelf.data.remote.dto.SyncConversationPushItem
 import com.example.mindshelf.data.remote.dto.SyncKbPushItem
 import com.example.mindshelf.data.remote.dto.SyncMessagePushItem
 import com.example.mindshelf.data.remote.dto.SyncNotePushItem
+import com.example.mindshelf.data.remote.dto.SyncPagePushItem
 import com.example.mindshelf.data.remote.dto.SyncPushRequest
 import com.example.mindshelf.data.remote.dto.SyncResolveRequest
 import com.example.mindshelf.data.remote.dto.TombstoneDto
@@ -39,6 +41,7 @@ class SyncEngine @Inject constructor(
     private val kbDao: KnowledgeBaseDao,
     private val noteKbDao: NoteKbDao,
     private val chatDao: ChatDao,
+    private val pageDao: PageDao,
 ) {
     private val _conflicts = MutableStateFlow<List<SyncConflict>>(emptyList())
     val conflicts: StateFlow<List<SyncConflict>> = _conflicts.asStateFlow()
@@ -70,6 +73,7 @@ class SyncEngine @Inject constructor(
             when (tomb.entity) {
                 "note" -> noteDao.markDeleted(tomb.id, tomb.deletedAt, tomb.deletedAt, SyncStatus.SYNCED)
                 "knowledge_base" -> kbDao.markDeleted(tomb.id, tomb.deletedAt, tomb.deletedAt, SyncStatus.SYNCED)
+                "page" -> pageDao.markDeleted(tomb.id, tomb.deletedAt, tomb.deletedAt, SyncStatus.SYNCED)
                 "conversation" -> {
                     chatDao.deleteToolActions(tomb.id)
                     chatDao.deleteAllMessages(tomb.id)
@@ -91,11 +95,21 @@ class SyncEngine @Inject constructor(
                 listOf(msg.toEntity(existing?.searchSourcesJson ?: "[]", SyncStatus.SYNCED)),
             )
         }
+        for (page in pull.pages) {
+            if (page.deletedAt != null) {
+                pageDao.markDeleted(page.id, page.deletedAt, page.updatedAt, SyncStatus.SYNCED)
+            } else {
+                if (page.pinned) pageDao.clearOtherPins(page.id)
+                pageDao.upsert(page.toEntity(SyncStatus.SYNCED))
+            }
+        }
 
         val pendingNotes = noteDao.getPendingSync()
         val pendingDeletes = noteDao.getPendingDeletes()
         val pendingKbs = kbDao.getPendingSync()
         val pendingKbDeletes = kbDao.getPendingDeletes()
+        val pendingPages = pageDao.getPendingSync()
+        val pendingPageDeletes = pageDao.getPendingDeletes()
 
         val pushNotes = pendingNotes.map { entity ->
             val kbIds = noteKbDao.getKbIdsForNote(entity.id)
@@ -114,6 +128,9 @@ class SyncEngine @Inject constructor(
             }
             pendingKbDeletes.forEach { entity ->
                 add(TombstoneDto("knowledge_base", entity.id, entity.deletedAt ?: System.currentTimeMillis()))
+            }
+            pendingPageDeletes.forEach { entity ->
+                add(TombstoneDto("page", entity.id, entity.deletedAt ?: System.currentTimeMillis()))
             }
         }
         val pushKbs = pendingKbs.map { entity ->
@@ -156,6 +173,18 @@ class SyncEngine @Inject constructor(
                 createdAt = entity.createdAt,
             )
         }
+        val pushPages = pendingPages.map { entity ->
+            val dto = entity.toDto()
+            SyncPagePushItem(
+                id = entity.id,
+                name = entity.name,
+                schemaJson = dto.schemaJson,
+                dataBindings = dto.dataBindings,
+                pinned = entity.pinned,
+                createdAt = entity.createdAt,
+                updatedAt = entity.updatedAt,
+            )
+        }
 
         val pushResult = api.syncPush(
             SyncPushRequest(
@@ -165,6 +194,7 @@ class SyncEngine @Inject constructor(
                 conversations = pushConversations,
                 branches = pushBranches,
                 messages = pushMessages,
+                pages = pushPages,
                 deletes = pushDeletes,
             ),
         ).data
@@ -195,6 +225,10 @@ class SyncEngine @Inject constructor(
                 "message" -> {
                     val entity = chatDao.getMessageById(applied.id) ?: continue
                     chatDao.upsertMessages(listOf(entity.copy(syncStatus = SyncStatus.SYNCED)))
+                }
+                "page" -> {
+                    val entity = pageDao.getByIdIncludingDeleted(applied.id) ?: continue
+                    pageDao.upsert(entity.copy(syncStatus = SyncStatus.SYNCED))
                 }
             }
         }

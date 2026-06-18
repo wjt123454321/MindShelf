@@ -18,6 +18,7 @@ import com.example.mindshelf.data.chat.buildBranchPathMessages
 import com.example.mindshelf.data.repository.ContentSyncRepository
 import com.example.mindshelf.data.repository.KnowledgeRepository
 import com.example.mindshelf.data.repository.NoteRepository
+import com.example.mindshelf.data.repository.PageRepository
 import com.example.mindshelf.di.ApplicationScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +47,7 @@ class ChatViewModel @Inject constructor(
     private val aiRouter: AiRouter,
     private val noteRepository: NoteRepository,
     private val knowledgeRepository: KnowledgeRepository,
+    private val pageRepository: PageRepository,
     private val contentSyncRepository: ContentSyncRepository,
     private val aiPreferences: AiPreferences,
     private val chatPreferences: ChatPreferences,
@@ -1445,6 +1447,15 @@ class ChatViewModel @Inject constructor(
                     noteRepository.applyFromToolResult(result)
                 }
             }
+            "mutate_custom_page" -> {
+                if (result["deleted"] == true) {
+                    val pageId = result["page_id"]?.toString() ?: return
+                    pageRepository.markDeletedFromServer(pageId)
+                } else {
+                    @Suppress("UNCHECKED_CAST")
+                    pageRepository.applyFromToolResult(result as Map<String, Any?>)
+                }
+            }
         }
     }
 
@@ -1456,16 +1467,23 @@ class ChatViewModel @Inject constructor(
         preview.action == "delete" -> when (tool) {
             "mutate_note" -> "笔记已删除"
             "mutate_knowledge_base" -> "知识库已删除"
+            "mutate_custom_page" -> "页面已删除"
             else -> "已删除"
         }
         preview.action == "create" -> when (tool) {
             "mutate_note" -> "笔记「${result?.get("title") ?: preview.after?.title ?: ""}」已创建"
             "mutate_knowledge_base" -> "知识库「${result?.get("name") ?: preview.after?.name ?: ""}」已创建"
+            "mutate_custom_page" -> {
+                val pinned = result?.get("pinned") == true
+                val base = "页面「${result?.get("name") ?: preview.name ?: ""}」已创建"
+                if (pinned) "$base，已固定到底栏" else base
+            }
             else -> "已创建"
         }
         preview.action == "update" -> when (tool) {
             "mutate_note" -> "笔记已更新"
             "mutate_knowledge_base" -> "知识库已更新"
+            "mutate_custom_page" -> "页面已更新"
             else -> "已更新"
         }
         else -> "操作已完成"

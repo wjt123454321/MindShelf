@@ -684,14 +684,30 @@ GET /notes/{note_id}/versions/compare?from={v1}&to={v2}
 {
   "id": "uuid",
   "name": "待办",
-  "schema_json": { },
-  "data_bindings": { },
+  "schema_json": {
+    "version": 1,
+    "root": {
+      "type": "Column",
+      "children": [
+        { "type": "TextBlock", "props": { "text": "今日待办" } },
+        { "type": "TodoList", "props": { "binding": "todos" } }
+      ]
+    }
+  },
+  "data_bindings": {
+    "todos": {
+      "kind": "checklist",
+      "items": [{ "id": "1", "text": "写报告", "done": false }]
+    }
+  },
   "pinned": false,
   "created_at": 1718400000000,
   "updated_at": 1718401000000,
   "deleted_at": null
 }
 ```
+
+`schema_json` 与 `data_bindings` 契约见 [architecture.md §9](architecture.md#9-自定义页面渲染架构决策)。
 
 ### 7.2 接口
 
@@ -703,9 +719,36 @@ PATCH  /pages/{page_id}
 DELETE /pages/{page_id}
 ```
 
-**PATCH** 可更新 `name`、`schema_json`、`data_bindings`、`pinned`。
+**GET /pages** — 返回当前用户未删除页面列表（`deleted_at IS NULL`），按 `updated_at` 降序。
 
-`schema_json` 结构见 [architecture.md §9](architecture.md#9-自定义页面渲染架构决策)。
+**POST /pages** — 创建页面。Request 可选字段：`id`、`name`、`schema_json`、`data_bindings`、`pinned`。`schema_json` / `data_bindings` 缺省时分别为空 Column 与 `{}`。
+
+**PATCH /pages/{page_id}** — 可更新 `name`、`schema_json`、`data_bindings`、`pinned`（部分更新）。
+
+**DELETE /pages/{page_id}** — 软删除（设 `deleted_at`），纳入回收站。
+
+### 7.3 pinned 互斥
+
+- 同一用户 **全局最多 1 个** `pinned=true`。
+- 当 PATCH 或 POST 将某页 `pinned` 设为 `true` 时，服务端自动将该用户其余页面的 `pinned` 置为 `false`。
+- 客户端切换固定页时同样本地互斥后再推送 sync。
+
+### 7.4 校验与错误码
+
+创建 / PATCH 时校验 `schema_json` 与 `data_bindings`（未知组件类型、缺少 `binding`、非法 `kind` 等）。
+
+| code | HTTP | 说明 |
+|------|------|------|
+| `PAGE_NOT_FOUND` | 404 | 页面不存在或已删除 |
+| `INVALID_SCHEMA` | 400 | `schema_json` 不符合 v1 契约 |
+| `INVALID_BINDINGS` | 400 | `data_bindings` 不符合 v1 契约 |
+| `INVALID_REQUEST` | 400 | 缺少必填字段 |
+
+### 7.5 同步
+
+- **Pull** `pages` 数组含 `updated_at > since` 的增量（含软删除字段）。
+- **Push** `pages` 数组 + tombstone `{ "entity": "page", "id", "deleted_at" }`。
+- 冲突策略：**Last-Write-Wins on `updated_at`**（较新 `updated_at` 覆盖）。
 
 ---
 

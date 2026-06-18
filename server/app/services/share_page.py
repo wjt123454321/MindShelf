@@ -200,6 +200,42 @@ def _page_shell(title: str, body: str) -> str:
       text-align: left;
     }}
     .md th {{ background: var(--code-bg); }}
+    .checklist {{
+      list-style: none;
+      padding: 0;
+      margin: 0.8em 0;
+    }}
+    .checklist li {{
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }}
+    .checklist li:last-child {{ border-bottom: none; }}
+    .check-box {{
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-radius: 4px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }}
+    .check-box.done {{
+      background: var(--primary);
+      border-color: var(--primary);
+    }}
+    .data-table {{
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.8em 0;
+    }}
+    .data-table th, .data-table td {{
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+    }}
+    .data-table th {{ background: var(--code-bg); }}
     .md hr {{
       border: none;
       border-top: 1px solid var(--border);
@@ -234,6 +270,91 @@ def render_share_not_found() -> str:
     </div>
     """
     return _page_shell("链接无效", body)
+
+
+def _render_checklist_html(binding: dict[str, Any]) -> str:
+    items = binding.get("items") or []
+    if not items:
+        return ""
+    rows = []
+    for item in items:
+        done = bool(item.get("done"))
+        text = html.escape(str(item.get("text") or ""))
+        box_class = "check-box done" if done else "check-box"
+        style = ' style="text-decoration: line-through; color: var(--muted);"' if done else ""
+        rows.append(
+            f'<li><span class="{box_class}"></span><span{style}>{text}</span></li>'
+        )
+    return f'<ul class="checklist">{"".join(rows)}</ul>'
+
+
+def _render_table_html(binding: dict[str, Any]) -> str:
+    headers = binding.get("headers") or []
+    rows = binding.get("rows") or []
+    if not headers and not rows:
+        return ""
+    head_html = "".join(f"<th>{html.escape(str(h))}</th>" for h in headers)
+    body_rows = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        cells = "".join(f"<td>{html.escape(str(c))}</td>" for c in row)
+        body_rows.append(f"<tr>{cells}</tr>")
+    thead = f"<thead><tr>{head_html}</tr></thead>" if headers else ""
+    return f'<table class="data-table">{thead}<tbody>{"".join(body_rows)}</tbody></table>'
+
+
+def _render_page_blocks(schema: dict[str, Any], bindings: dict[str, Any], notes_by_id: dict[str, dict]) -> str:
+    root = schema.get("root") or {}
+    return _render_page_node(root, bindings, notes_by_id)
+
+
+def _render_page_node(node: dict[str, Any], bindings: dict[str, Any], notes_by_id: dict[str, dict]) -> str:
+    node_type = node.get("type")
+    props = node.get("props") or {}
+
+    if node_type == "Column":
+        children = node.get("children") or []
+        return "".join(_render_page_node(c, bindings, notes_by_id) for c in children if isinstance(c, dict))
+
+    if node_type == "TextBlock":
+        text = props.get("text")
+        binding_key = props.get("binding")
+        if not text and binding_key:
+            bound = bindings.get(binding_key) or {}
+            text = bound.get("text") or bound.get("value") or ""
+        return f'<div class="card"><div class="md"><p>{html.escape(str(text or ""))}</p></div></div>'
+
+    if node_type in ("TodoList", "Checklist"):
+        binding = bindings.get(props.get("binding") or "") or {}
+        checklist_html = _render_checklist_html(binding)
+        if not checklist_html:
+            return ""
+        return f'<div class="card">{checklist_html}</div>'
+
+    if node_type == "SimpleTable":
+        binding = bindings.get(props.get("binding") or "") or {}
+        table_html = _render_table_html(binding)
+        if not table_html:
+            return ""
+        return f'<div class="card">{table_html}</div>'
+
+    if node_type == "NoteEmbed":
+        binding = bindings.get(props.get("binding") or "") or {}
+        note_id = binding.get("note_id")
+        note = notes_by_id.get(note_id or "")
+        if not note:
+            return '<div class="card"><p class="desc">笔记不可用</p></div>'
+        title = html.escape(note.get("title") or "无标题")
+        content_html = _render_markdown_html(note.get("content") or "")
+        return f"""
+    <div class="card">
+      <h2 class="note-title">{title}</h2>
+      <div class="md">{content_html}</div>
+    </div>
+        """
+
+    return ""
 
 
 def render_share_page(payload: dict[str, Any]) -> str:
@@ -280,6 +401,21 @@ def render_share_page(payload: dict[str, Any]) -> str:
       <p class="desc">共 {len(notes)} 篇笔记</p>
     </div>
     {''.join(note_blocks)}
+        """
+        return _page_shell(name, body)
+
+    if resource_type == "page":
+        name = snapshot.get("name") or "自定义页面"
+        schema = snapshot.get("schema_json") or {}
+        bindings = snapshot.get("data_bindings") or {}
+        notes_by_id = snapshot.get("embedded_notes") or {}
+        blocks = _render_page_blocks(schema, bindings, notes_by_id)
+        body = f"""
+    <div class="card">
+      <p class="badge">MindShelf 页面分享</p>
+      <h1 class="page-title">{html.escape(name)}</h1>
+    </div>
+    {blocks}
         """
         return _page_shell(name, body)
 

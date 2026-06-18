@@ -447,17 +447,82 @@ erDiagram
 
 | 项 | 说明 |
 |----|------|
-| 存储 | `custom_pages.schema_json` 存 JSON 组件树 |
-| 组件类型 | Phase 4 首批：`TodoList`、`Checklist`、`SimpleTable`、`TextBlock`、`NoteEmbed` |
-| 渲染 | `PageRenderer(composable)` 递归解析 schema，映射到预置 Composable |
-| 数据绑定 | `data_bindings` 指向 `note_id` 或本地键值；变更经 Repository 写回 |
-| AI 修改 | 工具 `mutate_custom_page` 输出合法 schema；服务端 / 客户端校验 JSON Schema |
-| 底栏 | `pinned=true` 的页面注册到 Navigation 底栏项 |
-| 分享 | 公开链接返回 schema + 绑定数据快照（只读渲染） |
+| 存储 | `custom_pages.schema_json` 存 JSON 组件树；`data_bindings` 存交互数据 |
+| 组件类型 | Phase 4 首批：`Column`、`TextBlock`、`TodoList`、`Checklist`、`SimpleTable`、`NoteEmbed` |
+| 渲染 | `PageRenderer` 递归解析 schema，映射到预置 Composable |
+| 数据绑定 | checklist / table 内联于 `data_bindings`；`NoteEmbed` 绑定 `note_id` |
+| AI 修改 | 工具 `mutate_custom_page` 输出合法 schema；服务端与客户端 `PageSchemaValidator` 校验 |
+| 底栏 | **全局最多 1 个** `pinned=true` → 作为第 5 个底栏 Tab（动态显示页面名） |
+| 分享 | 公开链接返回 schema + 绑定数据快照（只读 HTML 渲染） |
+| 同步冲突 | Last-Write-Wins on `updated_at`（页面无 `sync_version`） |
 
 **不采用 WebView 的原因：** 避免任意 HTML/JS 注入风险，保持与 App 一致的 Material 风格，工具输出结构化 JSON 更易校验与 diff。
 
 **扩展：** 若 Phase 4 后需复杂布局，可新增 `WebViewBlock` 组件类型，内容经 sanitizer 后隔离加载（后续迭代）。
+
+### 9.1 schema_json（v1）
+
+```json
+{
+  "version": 1,
+  "root": {
+    "type": "Column",
+    "children": [
+      { "type": "TextBlock", "props": { "text": "今日待办" } },
+      { "type": "TodoList", "props": { "binding": "todos" } },
+      { "type": "NoteEmbed", "props": { "binding": "notes_ref" } }
+    ]
+  }
+}
+```
+
+| type | props | 数据来源 |
+|------|-------|----------|
+| `Column` | `children[]` | 布局容器 |
+| `TextBlock` | `binding`（推荐）或 `text` | `data_bindings[binding]`，`kind: text` |
+| `TodoList` | `binding` | `data_bindings[binding].items[]` |
+| `Checklist` | `binding` | 同 TodoList（共享实现） |
+| `SimpleTable` | `binding` | `{ headers[], rows[][] }` |
+| `NoteEmbed` | `binding` | `{ note_id }` → 只读展示笔记 Markdown |
+
+校验规则：`version` 必须为 `1`；`root.type` 必须为已知类型；未知 `type` 拒绝；`Column.children` 为数组；交互组件必须提供合法 `binding` 键。
+
+### 9.2 data_bindings（v1）
+
+```json
+{
+  "intro": {
+    "kind": "text",
+    "text": "页面说明"
+  },
+  "todos": {
+    "kind": "checklist",
+    "items": [
+      { "id": "1", "text": "写报告", "done": false }
+    ]
+  },
+  "notes_ref": {
+    "kind": "note",
+    "note_id": "uuid"
+  },
+  "stats": {
+    "kind": "table",
+    "headers": ["项目", "数量"],
+    "rows": [["待办", "3"]]
+  }
+}
+```
+
+| kind | 字段 | 说明 |
+|------|------|------|
+| `text` | `text` | 段落文本；编辑模式可改 |
+| `checklist` | `items[]` | `{ id, text, done }`；阅读模式可勾选，编辑模式可增删改 |
+| `note` | `note_id` | 只读嵌入；点击跳转笔记编辑 |
+| `table` | `headers[]`, `rows[][]` | 编辑模式可改单元格与行列 |
+
+### 9.3 pinned 互斥
+
+同一用户全局最多 **1** 个 `pinned=true`。PATCH 或工具设 `pinned=true` 时，服务端将该用户其余页面 `pinned=false`；客户端本地同样保证互斥后再 sync。
 
 ---
 

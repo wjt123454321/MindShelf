@@ -5,10 +5,11 @@ import json
 from flask import Blueprint, g, request
 
 from app.extensions import db
-from app.models import Branch, Conversation, KnowledgeBase, Message, Note, NoteKb
+from app.models import Branch, Conversation, CustomPage, KnowledgeBase, Message, Note, NoteKb
 from app.routes.conversations import _branch_dict, _conv_dict, _msg_dict
 from app.routes.knowledge_bases import _kb_dict
 from app.routes.notes import _note_dict, _sync_kb_links
+from app.routes.pages import _page_dict
 from app.services.versions import snapshot_note
 from app.utils.auth import auth_required, new_id, now_ms
 from app.utils.responses import err, ok
@@ -42,6 +43,14 @@ def _tombstones(user_id: str, since: int) -> list[dict]:
     ).all()
     for kb in kbs:
         items.append({"entity": "knowledge_base", "id": kb.id, "deleted_at": kb.deleted_at})
+
+    pages = CustomPage.query.filter(
+        CustomPage.user_id == user_id,
+        CustomPage.deleted_at.isnot(None),
+        CustomPage.deleted_at > since,
+    ).all()
+    for page in pages:
+        items.append({"entity": "page", "id": page.id, "deleted_at": page.deleted_at})
     return items
 
 
@@ -77,6 +86,13 @@ def _pull_messages(user_id: str, since: int) -> list[dict]:
     return [_msg_dict(m) for m in q.all()]
 
 
+def _pull_pages(user_id: str, since: int) -> list[dict]:
+    q = CustomPage.query.filter_by(user_id=user_id)
+    if since > 0:
+        q = q.filter(CustomPage.updated_at > since)
+    return [_page_dict(p) for p in q.all()]
+
+
 @bp.get("/pull")
 @auth_required
 def pull():
@@ -101,7 +117,7 @@ def pull():
             "conversations": _pull_conversations(g.user_id, since),
             "branches": _pull_branches(g.user_id, since),
             "messages": _pull_messages(g.user_id, since),
-            "pages": [],
+            "pages": _pull_pages(g.user_id, since),
             "share_links": [],
             "tombstones": _tombstones(g.user_id, since) + _chat_tombstones(g.user_id, since),
         }
@@ -365,6 +381,105 @@ def _apply_message_push(item: dict) -> tuple[dict | None, dict | None]:
     return {"entity": "message", "id": msg_id}, None
 
 
+def _clear_page_pins(user_id: str, keep_id: str) -> None:
+    CustomPage.query.filter(
+        CustomPage.user_id == user_id,
+        CustomPage.id != keep_id,
+        CustomPage.pinned.is_(True),
+        CustomPage.deleted_at.is_(None),
+    ).update({"pinned": False}, synchronize_session=False)
+
+
+def _apply_page_push(item: dict) -> tuple[dict | None, dict | None]:
+    page_id = item.get("id")
+    if not page_id:
+        return None, None
+
+    remote = CustomPage.query.filter_by(id=page_id, user_id=g.user_id).first()
+    deleted_at = item.get("deleted_at")
+
+    if deleted_at:
+        if remote is None:
+            remote = CustomPage(
+                id=page_id,
+                user_id=g.user_id,
+                name=item.get("name") or "新页面",
+                schema_json=json.dumps(item.get("schema_json") or {}, ensure_ascii=False),
+                data_bindings=json.dumps(item.get("data_bindings") or {}, ensure_ascii=False),
+                pinned=False,
+                deleted_at=deleted_at,
+                created_at=item.get("created_at") or now_ms(),
+                updated_at=item.get("updated_at") or now_ms(),
+            )
+            db.session.add(remote)
+            db.session.commit()
+            return {"entity": "page", "id": page_id}, None
+        if remote.deleted_at is None:
+            remote.deleted_at = deleted_at
+            remote.pinned = False
+            remote.updated_at = item.get("updated_at") or now_ms()
+            db.session.commit()
+        return {"entity": "page", "id": page_id}, None
+
+    client_updated = item.get("updated_at") or 0
+    if remote is None:
+        page = CustomPage(
+            id=page_id,
+            user_id=g.user_id,
+            name=item.get("name") or "新页面",
+            schema_json=json.dumps(item.get("schema_json") or {}, ensure_ascii=False),
+            data_bindings=json.dumps(item.get("data_bindings") or {}, ensure_ascii=False),
+            pinned=bool(item.get("pinned", False)),
+            created_at=item.get("created_at") or now_ms(),
+            updated_at=client_updated or now_ms(),
+        )
+        db.session.add(page)
+        if page.pinned:
+            db.session.flush()
+            _clear_page_pins(g.user_id, page_id)
+        db.session.commit()
+        return {"entity": "page", "id": page_id}, None
+
+    if remote.deleted_at is not None:
+        remote.deleted_at = None
+
+    if client_updated < remote.updated_at and item.get("force") is not True:
+        conflict = {
+            "entity": "page",
+            "id": page_id,
+            "base": item.get("base") or {},
+            "local": {
+                "name": item.get("name"),
+                "schema_json": item.get("schema_json"),
+                "data_bindings": item.get("data_bindings"),
+                "pinned": item.get("pinned"),
+                "updated_at": client_updated,
+            },
+            "remote": {
+                "name": remote.name,
+                "schema_json": json.loads(remote.schema_json or "{}"),
+                "data_bindings": json.loads(remote.data_bindings or "{}"),
+                "pinned": remote.pinned,
+                "updated_at": remote.updated_at,
+            },
+        }
+        return None, conflict
+
+    if "name" in item:
+        remote.name = item["name"]
+    if "schema_json" in item:
+        remote.schema_json = json.dumps(item["schema_json"], ensure_ascii=False)
+    if "data_bindings" in item:
+        remote.data_bindings = json.dumps(item["data_bindings"], ensure_ascii=False)
+    if "pinned" in item:
+        remote.pinned = bool(item["pinned"])
+        if remote.pinned:
+            _clear_page_pins(g.user_id, page_id)
+    remote.updated_at = item.get("updated_at") or now_ms()
+    db.session.commit()
+    return {"entity": "page", "id": page_id}, None
+
+
 @bp.post("/push")
 @auth_required
 def push():
@@ -407,6 +522,13 @@ def push():
         if c:
             conflicts.append(c)
 
+    for item in body.get("pages") or []:
+        a, c = _apply_page_push(item)
+        if a:
+            applied.append(a)
+        if c:
+            conflicts.append(c)
+
     for tomb in body.get("deletes") or []:
         entity = tomb.get("entity")
         entity_id = tomb.get("id")
@@ -421,6 +543,12 @@ def push():
             if kb and kb.deleted_at is None:
                 kb.deleted_at = deleted_at
                 kb.updated_at = deleted_at
+        elif entity == "page" and entity_id:
+            page = CustomPage.query.filter_by(id=entity_id, user_id=g.user_id).first()
+            if page and page.deleted_at is None:
+                page.deleted_at = deleted_at
+                page.pinned = False
+                page.updated_at = deleted_at
 
     db.session.commit()
     return ok({"server_time": now_ms(), "applied": applied, "conflicts": conflicts})
@@ -476,5 +604,26 @@ def resolve():
         kb.updated_at = now_ms()
         db.session.commit()
         return ok(_kb_dict(kb))
+
+    if entity == "page":
+        page = CustomPage.query.filter_by(id=entity_id, user_id=g.user_id, deleted_at=None).first()
+        if page is None:
+            return err("PAGE_NOT_FOUND", "页面不存在", 404)
+        if resolution == "remote":
+            return ok(_page_dict(page))
+        merged = body.get("merged") or body.get("local") or {}
+        if "name" in merged:
+            page.name = merged["name"]
+        if "schema_json" in merged:
+            page.schema_json = json.dumps(merged["schema_json"], ensure_ascii=False)
+        if "data_bindings" in merged:
+            page.data_bindings = json.dumps(merged["data_bindings"], ensure_ascii=False)
+        if "pinned" in merged:
+            page.pinned = bool(merged["pinned"])
+            if page.pinned:
+                _clear_page_pins(g.user_id, entity_id)
+        page.updated_at = now_ms()
+        db.session.commit()
+        return ok(_page_dict(page))
 
     return err("INVALID_ENTITY", "不支持的实体类型", 400)

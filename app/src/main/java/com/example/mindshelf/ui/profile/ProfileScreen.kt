@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Person
@@ -59,6 +60,7 @@ fun ProfileScreen(
     onLogout: () -> Unit,
     onOpenAiSettings: () -> Unit = {},
     onOpenTrash: () -> Unit = {},
+    onOpenPages: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -244,6 +246,16 @@ fun ProfileScreen(
                                         onClick = { if (!uiState.syncing) viewModel.syncNow() },
                                     )
                                 }
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                )
+                                ProfileListItem(
+                                    icon = Icons.Filled.Dashboard,
+                                    label = "自定义页面",
+                                    value = "AI 创建或管理 Schema 页面",
+                                    onClick = onOpenPages,
+                                )
                                 HorizontalDivider(
                                     modifier = Modifier.padding(horizontal = 16.dp),
                                     color = MaterialTheme.colorScheme.outlineVariant,

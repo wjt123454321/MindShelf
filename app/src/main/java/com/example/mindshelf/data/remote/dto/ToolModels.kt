@@ -17,6 +17,9 @@ data class ToolPreview(
     val content: String? = null,
     val name: String? = null,
     val description: String? = null,
+    @SerializedName("page_id") val pageId: String? = null,
+    @SerializedName("schema_summary") val schemaSummary: String? = null,
+    val pinned: Boolean? = null,
     val before: ToolContentSnapshot? = null,
     val after: ToolContentSnapshot? = null,
 )

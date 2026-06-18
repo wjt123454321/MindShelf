@@ -6,8 +6,9 @@ from urllib.parse import urlparse
 from flask import Blueprint, current_app, g, request
 
 from app.extensions import db
-from app.models import KnowledgeBase, Note, NoteKb, ShareLink
+from app.models import CustomPage, KnowledgeBase, Note, NoteKb, ShareLink
 from app.routes.notes import _note_dict
+from app.routes.pages import _page_dict
 from app.services.share_page import render_share_not_found, render_share_page
 from app.utils.auth import auth_required, new_id, now_ms
 from app.utils.responses import err, ok
@@ -95,6 +96,34 @@ def _load_share_payload(token: str) -> dict | None:
             "shared_at": link.created_at,
         }
 
+    if link.resource_type == "page":
+        page = CustomPage.query.filter_by(
+            id=link.resource_id, user_id=link.user_id, deleted_at=None
+        ).first()
+        if page is None:
+            return None
+        snapshot = _page_dict(page)
+        bindings = snapshot.get("data_bindings") or {}
+        embedded_notes: dict[str, dict] = {}
+        for binding in bindings.values():
+            if isinstance(binding, dict) and binding.get("kind") == "note":
+                note_id = binding.get("note_id")
+                if note_id:
+                    note = Note.query.filter_by(
+                        id=note_id, user_id=link.user_id, deleted_at=None
+                    ).first()
+                    if note:
+                        embedded_notes[note_id] = {
+                            "title": note.title,
+                            "content": note.content,
+                        }
+        snapshot["embedded_notes"] = embedded_notes
+        return {
+            "resource_type": "page",
+            "snapshot": snapshot,
+            "shared_at": link.created_at,
+        }
+
     return None
 
 
@@ -103,6 +132,10 @@ def _get_owned_resource(user_id: str, resource_type: str, resource_id: str):
         return Note.query.filter_by(id=resource_id, user_id=user_id, deleted_at=None).first()
     if resource_type == "knowledge_base":
         return KnowledgeBase.query.filter_by(
+            id=resource_id, user_id=user_id, deleted_at=None
+        ).first()
+    if resource_type == "page":
+        return CustomPage.query.filter_by(
             id=resource_id, user_id=user_id, deleted_at=None
         ).first()
     return None
@@ -114,8 +147,8 @@ def create_link():
     body = request.get_json(silent=True) or {}
     resource_type = body.get("resource_type")
     resource_id = body.get("resource_id")
-    if resource_type not in ("note", "knowledge_base"):
-        return err("INVALID_TYPE", "仅支持 note 或 knowledge_base", 400)
+    if resource_type not in ("note", "knowledge_base", "page"):
+        return err("INVALID_TYPE", "仅支持 note、knowledge_base 或 page", 400)
     if not resource_id:
         return err("INVALID_REQUEST", "缺少 resource_id", 400)
 

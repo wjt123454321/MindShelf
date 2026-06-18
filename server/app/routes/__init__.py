@@ -7,6 +7,7 @@ from app.routes.auth import bp as auth_bp
 from app.routes.conversations import bp as conversations_bp
 from app.routes.knowledge_bases import bp as kb_bp
 from app.routes.notes import bp as notes_bp
+from app.routes.pages import bp as pages_bp
 from app.routes.share import bp as share_bp
 from app.routes.share import public_bp as public_share_bp
 from app.routes.sync import bp as sync_bp
@@ -17,6 +18,7 @@ def register_blueprints(app: Flask) -> None:
     for bp in (
         auth_bp,
         notes_bp,
+        pages_bp,
         kb_bp,
         conversations_bp,
         ai_bp,

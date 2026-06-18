@@ -10,6 +10,7 @@ import com.example.mindshelf.data.local.dao.ChatDao
 import com.example.mindshelf.data.local.dao.KnowledgeBaseDao
 import com.example.mindshelf.data.local.dao.NoteDao
 import com.example.mindshelf.data.local.dao.NoteKbDao
+import com.example.mindshelf.data.local.dao.PageDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -99,6 +100,26 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS custom_pages (
+                    id TEXT NOT NULL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    schemaJson TEXT NOT NULL,
+                    dataBindings TEXT NOT NULL,
+                    pinned INTEGER NOT NULL,
+                    createdAt INTEGER NOT NULL,
+                    updatedAt INTEGER NOT NULL,
+                    deletedAt INTEGER,
+                    syncStatus TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): MindShelfDatabase =
@@ -111,6 +132,7 @@ object DatabaseModule {
                 MIGRATION_5_6,
                 MIGRATION_6_7,
                 MIGRATION_7_8,
+                MIGRATION_8_9,
             )
             .build()
 
@@ -128,4 +150,7 @@ object DatabaseModule {
 
     @Provides
     fun provideAiProviderDao(db: MindShelfDatabase): AiProviderDao = db.aiProviderDao()
+
+    @Provides
+    fun providePageDao(db: MindShelfDatabase): PageDao = db.pageDao()
 }

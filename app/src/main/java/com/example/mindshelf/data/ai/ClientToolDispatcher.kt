@@ -3,8 +3,11 @@ package com.example.mindshelf.data.ai
 import com.example.mindshelf.data.remote.MindShelfApi
 import com.example.mindshelf.data.remote.dto.ToolContentSnapshot
 import com.example.mindshelf.data.remote.dto.ToolPreview
+import com.example.mindshelf.data.page.PageSchemaNormalizer
+import com.example.mindshelf.data.page.PageSchemaValidator
 import com.example.mindshelf.data.repository.KnowledgeRepository
 import com.example.mindshelf.data.repository.NoteRepository
+import com.example.mindshelf.data.repository.PageRepository
 import com.example.mindshelf.data.sync.SyncCoordinator
 import com.google.gson.Gson
 import com.google.gson.JsonObject
@@ -16,6 +19,7 @@ import javax.inject.Singleton
 class ClientToolDispatcher @Inject constructor(
     private val noteRepository: NoteRepository,
     private val knowledgeRepository: KnowledgeRepository,
+    private val pageRepository: PageRepository,
     private val api: MindShelfApi,
     private val syncCoordinator: SyncCoordinator,
 ) {
@@ -30,6 +34,10 @@ class ClientToolDispatcher @Inject constructor(
                 kbId = arguments["kb_id"]?.toString(),
                 noteId = arguments["note_id"]?.toString(),
             )
+            "search_custom_pages" -> pageRepository.searchPages(
+                query = arguments["query"]?.toString().orEmpty(),
+                pageId = arguments["page_id"]?.toString(),
+            )
             "web_search" -> executeWebSearch(arguments)
             else -> mapOf("error" to "未知工具: $name")
         }
@@ -39,6 +47,7 @@ class ClientToolDispatcher @Inject constructor(
         return when (name) {
             "mutate_note" -> buildNotePreview(action, arguments)
             "mutate_knowledge_base" -> buildKbPreview(action, arguments)
+            "mutate_custom_page" -> buildPagePreview(action, arguments)
             else -> ToolPreview(action = action)
         }
     }
@@ -48,6 +57,7 @@ class ClientToolDispatcher @Inject constructor(
         val result = when (name) {
             "mutate_note" -> mutateNote(action, arguments)
             "mutate_knowledge_base" -> mutateKb(action, arguments)
+            "mutate_custom_page" -> mutatePage(action, arguments)
             else -> mapOf("error" to "未知写工具")
         }
         if (syncCoordinator.shouldWriteRemote()) {
@@ -131,6 +141,44 @@ class ClientToolDispatcher @Inject constructor(
                 before = kb?.let { ToolContentSnapshot(name = it.name, description = it.description) },
             )
             else -> ToolPreview(action = action, kbId = kbId.takeIf { it.isNotBlank() })
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun buildPagePreview(action: String, args: Map<String, Any?>): ToolPreview {
+        val pageId = args["page_id"]?.toString()?.trim().orEmpty()
+        val page = pageId.takeIf { it.isNotBlank() }?.let { pageRepository.get(it) }
+        @Suppress("UNCHECKED_CAST")
+        val schemaInput = args["schema_json"] ?: page?.schemaJson
+        val bindingsInput = args["data_bindings"] ?: page?.dataBindings
+        val normalized = PageSchemaNormalizer.normalize(schemaInput, bindingsInput)
+        val summary = PageSchemaValidator.summarizeComponentTypes(normalized.schema)
+        val name = args["name"]?.toString() ?: page?.name
+        val pinned = args["pinned"] as? Boolean ?: page?.pinned
+        return when (action) {
+            "create" -> ToolPreview(
+                action = action,
+                name = name,
+                schemaSummary = summary,
+                pinned = pinned,
+            )
+            "update" -> ToolPreview(
+                action = action,
+                pageId = pageId.takeIf { it.isNotBlank() },
+                name = name,
+                schemaSummary = summary,
+                pinned = pinned,
+                before = page?.let {
+                    ToolContentSnapshot(name = it.name, description = PageSchemaValidator.summarizeComponentTypes(it.schemaJson))
+                },
+                after = ToolContentSnapshot(name = name, description = summary),
+            )
+            "delete" -> ToolPreview(
+                action = action,
+                pageId = pageId.takeIf { it.isNotBlank() },
+                before = page?.let { ToolContentSnapshot(name = it.name) },
+            )
+            else -> ToolPreview(action = action, pageId = pageId.takeIf { it.isNotBlank() })
         }
     }
 
@@ -228,6 +276,87 @@ class ClientToolDispatcher @Inject constructor(
                 if (kbId.isBlank()) return mapOf("error" to "缺少 kb_id")
                 knowledgeRepository.delete(kbId)
                 mapOf("kb_id" to kbId, "deleted" to true)
+            }
+            else -> mapOf("error" to "无效 action")
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun mutatePage(action: String, args: Map<String, Any?>): Map<String, Any?> {
+        return when (action) {
+            "create" -> {
+                val pageId = args["page_id"]?.toString()?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+                val normalized = PageSchemaNormalizer.normalize(args["schema_json"], args["data_bindings"])
+                val schema = normalized.schema
+                val bindings = normalized.bindings
+                PageSchemaValidator.validateSchema(schema)?.let {
+                    return mapOf("error" to CustomPageToolGuide.enrichValidationError(it))
+                }
+                PageSchemaValidator.validateBindings(bindings)?.let {
+                    return mapOf("error" to CustomPageToolGuide.enrichValidationError(it))
+                }
+                val page = pageRepository.create(
+                    name = args["name"]?.toString() ?: "新页面",
+                    schemaJson = schema,
+                    dataBindings = bindings,
+                    pinned = args["pinned"] as? Boolean ?: false,
+                    id = pageId,
+                )
+                mapOf(
+                    "page_id" to page.id,
+                    "name" to page.name,
+                    "schema_json" to page.schemaJson,
+                    "data_bindings" to page.dataBindings,
+                    "pinned" to page.pinned,
+                    "updated_at" to page.updatedAt,
+                    "normalized" to normalized.fixes.takeIf { it.isNotEmpty() },
+                )
+            }
+            "update" -> {
+                val pageId = args["page_id"]?.toString()?.trim().orEmpty()
+                if (pageId.isBlank()) return mapOf("error" to "缺少 page_id")
+                val existing = pageRepository.get(pageId) ?: return mapOf("error" to "页面不存在")
+                val normalized = PageSchemaNormalizer.normalize(
+                    args["schema_json"] ?: existing.schemaJson,
+                    args["data_bindings"] ?: existing.dataBindings,
+                )
+                val schema = if (args.containsKey("schema_json")) normalized.schema else null
+                val bindings = if (args.containsKey("schema_json") || args.containsKey("data_bindings")) {
+                    normalized.bindings
+                } else {
+                    null
+                }
+                schema?.let {
+                    PageSchemaValidator.validateSchema(it)?.let { msg ->
+                        return mapOf("error" to CustomPageToolGuide.enrichValidationError(msg))
+                    }
+                }
+                bindings?.let {
+                    PageSchemaValidator.validateBindings(it)?.let { msg ->
+                        return mapOf("error" to CustomPageToolGuide.enrichValidationError(msg))
+                    }
+                }
+                val updated = pageRepository.update(
+                    id = pageId,
+                    name = args["name"]?.toString(),
+                    schemaJson = schema,
+                    dataBindings = bindings,
+                    pinned = args["pinned"] as? Boolean,
+                )
+                mapOf(
+                    "page_id" to updated.id,
+                    "name" to updated.name,
+                    "schema_json" to updated.schemaJson,
+                    "data_bindings" to updated.dataBindings,
+                    "pinned" to updated.pinned,
+                    "updated_at" to updated.updatedAt,
+                )
+            }
+            "delete" -> {
+                val pageId = args["page_id"]?.toString()?.trim().orEmpty()
+                if (pageId.isBlank()) return mapOf("error" to "缺少 page_id")
+                pageRepository.delete(pageId)
+                mapOf("page_id" to pageId, "deleted" to true)
             }
             else -> mapOf("error" to "无效 action")
         }

@@ -99,3 +99,16 @@ data class ToolActionEntity(
     val errorMessage: String?,
     val createdAt: Long,
 )
+
+@Entity(tableName = "custom_pages")
+data class CustomPageEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val schemaJson: String,
+    val dataBindings: String,
+    val pinned: Boolean,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val deletedAt: Long?,
+    val syncStatus: SyncStatus,
+)

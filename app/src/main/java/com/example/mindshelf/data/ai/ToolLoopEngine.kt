@@ -255,7 +255,10 @@ class ToolLoopEngine @Inject constructor(
     private fun buildMessages(history: List<MessageDto>, userContent: String, enableSearch: Boolean): JsonArray {
         val system = buildString {
             append("你是 MindShelf 知识库助手，简洁准确地回答用户问题。")
-            append("工具 search_knowledge_bases、search_notes 用于检索本机知识库与笔记。")
+            append("工具 search_knowledge_bases、search_notes、search_custom_pages 用于检索本机知识库、笔记与自定义页面。")
+            append("mutate_note、mutate_knowledge_base、mutate_custom_page 可创建或修改笔记、知识库与自定义页面（需用户确认）。")
+            append("修改自定义页面前须先用 search_custom_pages(page_id=...) 读取当前 schema_json 与 data_bindings。")
+            append(CustomPageToolGuide.systemPromptSection())
             append("删除或修改内容前需用户明确意图。")
             if (enableSearch) {
                 append("用户已开启联网搜索；外部信息请用 web_search，本地内容用 search_notes/search_knowledge_bases。")

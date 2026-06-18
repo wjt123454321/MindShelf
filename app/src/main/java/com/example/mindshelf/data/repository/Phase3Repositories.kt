@@ -14,8 +14,10 @@ class TrashRepository @Inject constructor(
     private val api: MindShelfApi,
     private val noteDao: NoteDao,
     private val kbDao: KnowledgeBaseDao,
+    private val pageDao: com.example.mindshelf.data.local.dao.PageDao,
     private val noteRepository: NoteRepository,
     private val knowledgeRepository: KnowledgeRepository,
+    private val pageRepository: PageRepository,
     private val syncCoordinator: SyncCoordinator,
 ) {
     suspend fun listTrash(): List<TrashItemDto> {
@@ -29,6 +31,7 @@ class TrashRepository @Inject constructor(
         when (entityType) {
             "note" -> noteRepository.restoreFromTrash(id)
             "knowledge_base" -> knowledgeRepository.restoreFromTrash(id)
+            "page" -> pageRepository.restoreFromTrash(id)
         }
     }
 
@@ -39,6 +42,7 @@ class TrashRepository @Inject constructor(
         when (entityType) {
             "note" -> noteRepository.purgeLocal(id)
             "knowledge_base" -> knowledgeRepository.purgeLocal(id)
+            "page" -> pageRepository.purgeLocal(id)
         }
     }
 
@@ -69,6 +73,20 @@ class TrashRepository @Inject constructor(
                         "id" to kb.id,
                         "name" to kb.name,
                         "description" to kb.description,
+                    ),
+                    deletedAt = deletedAt,
+                    expiresAt = deletedAt + retentionMs,
+                ),
+            )
+        }
+        for (page in pageDao.getDeleted()) {
+            val deletedAt = page.deletedAt ?: continue
+            items.add(
+                TrashItemDto(
+                    entityType = "page",
+                    entity = mapOf(
+                        "id" to page.id,
+                        "name" to page.name,
                     ),
                     deletedAt = deletedAt,
                     expiresAt = deletedAt + retentionMs,

@@ -3,9 +3,10 @@
 from flask import Blueprint, g, request
 
 from app.extensions import db
-from app.models import KnowledgeBase, Note, NoteKb
+from app.models import CustomPage, KnowledgeBase, Note, NoteKb
 from app.routes.knowledge_bases import _kb_dict
 from app.routes.notes import _note_dict
+from app.routes.pages import _page_dict
 from app.services.trash import expires_at, purge_expired_trash
 from app.utils.auth import auth_required, now_ms
 from app.utils.responses import err, ok
@@ -53,6 +54,22 @@ def list_trash():
             }
         )
 
+    pages = (
+        CustomPage.query.filter_by(user_id=g.user_id)
+        .filter(CustomPage.deleted_at.isnot(None))
+        .order_by(CustomPage.deleted_at.desc())
+        .all()
+    )
+    for page in pages:
+        items.append(
+            {
+                "entity_type": "page",
+                "entity": _page_dict(page),
+                "deleted_at": page.deleted_at,
+                "expires_at": expires_at(page.deleted_at),
+            }
+        )
+
     items.sort(key=lambda x: x["deleted_at"], reverse=True)
     return ok(items)
 
@@ -85,6 +102,15 @@ def restore():
         db.session.commit()
         return ok(_kb_dict(kb))
 
+    if entity_type == "page":
+        page = CustomPage.query.filter_by(id=entity_id, user_id=g.user_id).first()
+        if page is None or page.deleted_at is None:
+            return err("NOT_FOUND", "回收站中不存在该页面", 404)
+        page.deleted_at = None
+        page.updated_at = now
+        db.session.commit()
+        return ok(_page_dict(page))
+
     return err("INVALID_ENTITY", "不支持的实体类型", 400)
 
 
@@ -112,6 +138,17 @@ def purge(entity_type: str, entity_id: str):
 
         ShareLink.query.filter_by(resource_type="knowledge_base", resource_id=entity_id).delete()
         db.session.delete(kb)
+        db.session.commit()
+        return "", 204
+
+    if entity_type == "page":
+        page = CustomPage.query.filter_by(id=entity_id, user_id=g.user_id).first()
+        if page is None or page.deleted_at is None:
+            return err("NOT_FOUND", "回收站中不存在该页面", 404)
+        from app.models import ShareLink
+
+        ShareLink.query.filter_by(resource_type="page", resource_id=entity_id).delete()
+        db.session.delete(page)
         db.session.commit()
         return "", 204
 
