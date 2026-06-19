@@ -8,7 +8,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -30,6 +29,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.data.remote.dto.NoteVersionDto
 import com.example.mindshelf.ui.components.EmptyState
+import com.example.mindshelf.ui.components.MindShelfAlertDialog
 import com.example.mindshelf.ui.components.MindShelfTopAppBar
 import com.example.mindshelf.ui.util.formatRelativeTime
 
@@ -55,9 +55,9 @@ fun NoteVersionsScreen(
     }
 
     restoreTarget?.let { version ->
-        AlertDialog(
+        MindShelfAlertDialog(
             onDismissRequest = { restoreTarget = null },
-            title = { Text("恢复此版本？") },
+            title = { Text("恢复此版本？", style = MaterialTheme.typography.titleLarge) },
             text = { Text("当前内容将保存为新版本，笔记将回滚到所选快照。") },
             confirmButton = {
                 TextButton(onClick = {

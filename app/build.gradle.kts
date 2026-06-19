@@ -17,7 +17,7 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "API_BASE_URL", "\"http://10.29.56.31:5000/api/v1/\"")
+        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:5000/api/v1/\"")
     }
 
     buildTypes {
@@ -27,7 +27,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "API_BASE_URL", "\"https://your-domain.com/api/v1/\"")
+            buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:5000/api/v1/\"")
         }
     }
     compileOptions {

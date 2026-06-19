@@ -21,8 +21,6 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
@@ -238,19 +236,21 @@ private fun BuiltinModelChip(
             trailingIcon = Icons.Default.ArrowDropDown,
             onClick = { if (enabled) expanded = true },
         )
-        DropdownMenu(
+        MindShelfDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            DropdownMenuItem(
-                text = { Text(AiPreferences.builtinModelLabel(AiPreferences.MODEL_FLASH)) },
+            MindShelfDropdownMenuItem(
+                text = AiPreferences.builtinModelLabel(AiPreferences.MODEL_FLASH),
+                selected = model == AiPreferences.MODEL_FLASH,
                 onClick = {
                     onModelChange(AiPreferences.MODEL_FLASH)
                     expanded = false
                 },
             )
-            DropdownMenuItem(
-                text = { Text(AiPreferences.builtinModelLabel(AiPreferences.MODEL_V4_PRO)) },
+            MindShelfDropdownMenuItem(
+                text = AiPreferences.builtinModelLabel(AiPreferences.MODEL_V4_PRO),
+                selected = model == AiPreferences.MODEL_V4_PRO,
                 onClick = {
                     onModelChange(AiPreferences.MODEL_V4_PRO)
                     expanded = false

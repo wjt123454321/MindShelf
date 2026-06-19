@@ -26,12 +26,9 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -73,8 +70,11 @@ import com.example.mindshelf.data.remote.dto.ConversationDto
 import com.example.mindshelf.data.remote.dto.MessageDto
 import com.example.mindshelf.ui.components.ChatInputBar
 import com.example.mindshelf.ui.components.ConfirmDeleteDialog
-import com.example.mindshelf.ui.components.SwipeDeleteBackground
 import com.example.mindshelf.ui.components.EmptyState
+import com.example.mindshelf.ui.components.MindShelfAlertDialog
+import com.example.mindshelf.ui.components.MindShelfDropdownMenu
+import com.example.mindshelf.ui.components.MindShelfDropdownMenuItem
+import com.example.mindshelf.ui.components.SwipeDeleteBackground
 import com.example.mindshelf.ui.voice.SpeechToTextController
 import com.example.mindshelf.ui.voice.SpeechUiState
 import com.example.mindshelf.ui.voice.isNetworkAvailable
@@ -381,9 +381,9 @@ fun ChatScreen(
     val currentBranch = activeChat?.let { branches.find { b -> b.id == it.branchId } }
 
     editingMessage?.let { message ->
-        AlertDialog(
+        MindShelfAlertDialog(
             onDismissRequest = { editingMessage = null },
-            title = { Text("修改消息", style = MaterialTheme.typography.titleMedium) },
+            title = { Text("修改消息", style = MaterialTheme.typography.titleLarge) },
             text = {
                 OutlinedTextField(
                     value = editText,
@@ -472,15 +472,14 @@ fun ChatScreen(
                                     style = MaterialTheme.typography.labelMedium,
                                 )
                             }
-                            DropdownMenu(
+                            MindShelfDropdownMenu(
                                 expanded = branchMenuExpanded,
                                 onDismissRequest = { branchMenuExpanded = false },
                             ) {
                                 branches.forEach { branch ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(branch.label, style = MaterialTheme.typography.bodyMedium)
-                                        },
+                                    MindShelfDropdownMenuItem(
+                                        text = branch.label,
+                                        selected = branch.id == activeChat?.branchId,
                                         onClick = {
                                             viewModel.switchBranch(branch.id)
                                             branchMenuExpanded = false

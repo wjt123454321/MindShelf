@@ -74,7 +74,7 @@ class AiPreferences @Inject constructor(
         val BUILTIN_MODELS = setOf(MODEL_FLASH, MODEL_V4_PRO)
 
         fun builtinModelLabel(model: String): String = when (model) {
-            MODEL_V4_PRO -> "V4 Pro"
+            MODEL_V4_PRO -> "Pro"
             MODEL_FLASH -> "Flash"
             else -> model
         }

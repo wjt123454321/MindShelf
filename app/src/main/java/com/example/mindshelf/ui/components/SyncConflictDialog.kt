@@ -3,7 +3,6 @@ package com.example.mindshelf.ui.components
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,9 +30,9 @@ fun SyncConflictDialog(
         ?: conflict.remote["name"]?.toString()
         ?: "云端版本"
 
-    AlertDialog(
+    MindShelfAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = { Text(title, style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(Modifier.fillMaxWidth()) {
                 Text(

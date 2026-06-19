@@ -13,7 +13,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -39,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.res.stringResource
 import com.example.mindshelf.R
 import com.example.mindshelf.data.local.AiPreferences
+import com.example.mindshelf.ui.components.MindShelfAlertDialog
 import com.example.mindshelf.ui.components.MindShelfTopAppBar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,7 +117,9 @@ fun AiSettingsScreen(
                         )
                     }
                 }
-                Card(Modifier.fillMaxWidth()) {
+            }
+            item {
+                Card(Modifier.fillMaxWidth().padding(top = 12.dp)) {
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -142,8 +144,14 @@ fun AiSettingsScreen(
                         )
                     }
                 }
-                uiState.error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+            }
+            uiState.error?.let { error ->
+                item {
+                    Text(
+                        error,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
                 }
             }
         }
@@ -210,9 +218,9 @@ private fun AddProviderDialog(
     var model by remember { mutableStateOf("deepseek-chat") }
     var apiKey by remember { mutableStateOf("") }
 
-    AlertDialog(
+    MindShelfAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加自定义 API") },
+        title = { Text("添加自定义 API", style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("名称") }, modifier = Modifier.fillMaxWidth())

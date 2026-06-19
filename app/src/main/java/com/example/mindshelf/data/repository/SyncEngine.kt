@@ -1,5 +1,6 @@
 package com.example.mindshelf.data.repository
 
+import com.example.mindshelf.data.chat.BranchDeduplicator
 import com.example.mindshelf.data.local.SyncPreferences
 import com.example.mindshelf.data.local.dao.ChatDao
 import com.example.mindshelf.data.local.dao.KnowledgeBaseDao
@@ -42,6 +43,7 @@ class SyncEngine @Inject constructor(
     private val noteKbDao: NoteKbDao,
     private val chatDao: ChatDao,
     private val pageDao: PageDao,
+    private val branchDeduplicator: BranchDeduplicator,
 ) {
     private val _conflicts = MutableStateFlow<List<SyncConflict>>(emptyList())
     val conflicts: StateFlow<List<SyncConflict>> = _conflicts.asStateFlow()
@@ -88,6 +90,11 @@ class SyncEngine @Inject constructor(
         }
         for (branch in pull.branches) {
             chatDao.upsertBranches(listOf(branch.toEntity(SyncStatus.SYNCED)))
+        }
+        val convIdsToDedupe = (pull.conversations.map { it.id } + pull.branches.map { it.conversationId })
+            .distinct()
+        for (convId in convIdsToDedupe) {
+            branchDeduplicator.deduplicateMainBranches(convId)
         }
         for (msg in pull.messages) {
             val existing = chatDao.getMessageById(msg.id)
@@ -150,6 +157,10 @@ class SyncEngine @Inject constructor(
                 updatedAt = entity.updatedAt,
             )
         }
+        chatDao.getPendingBranches()
+            .map { it.conversationId }
+            .distinct()
+            .forEach { convId -> branchDeduplicator.deduplicateMainBranches(convId) }
         val pushBranches = chatDao.getPendingBranches().map { entity ->
             SyncBranchPushItem(
                 id = entity.id,

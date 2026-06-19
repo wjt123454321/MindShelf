@@ -40,6 +40,33 @@ def _branch_dict(b: Branch) -> dict:
     }
 
 
+def _dedupe_main_branches(conversation_id: str) -> None:
+    """合并重复的「主分支」（离线创建 + 服务端各建一条时的历史问题）。"""
+    mains = (
+        Branch.query.filter_by(conversation_id=conversation_id, label="主分支")
+        .filter(
+            (Branch.root_message_id.is_(None)) | (Branch.root_message_id == ""),
+        )
+        .all()
+    )
+    if len(mains) <= 1:
+        return
+
+    def _msg_count(branch: Branch) -> int:
+        return Message.query.filter_by(branch_id=branch.id).count()
+
+    canonical = max(mains, key=lambda b: (_msg_count(b), -b.created_at))
+    for dup in mains:
+        if dup.id == canonical.id:
+            continue
+        Message.query.filter_by(branch_id=dup.id).update(
+            {Message.branch_id: canonical.id},
+            synchronize_session=False,
+        )
+        db.session.delete(dup)
+    db.session.commit()
+
+
 def _msg_dict(m: Message) -> dict:
     segments = []
     if m.segments_json:
@@ -88,11 +115,13 @@ def create_conversation():
     db.session.flush()
 
     branch = Branch(
+        id=body.get("branch_id") or new_id(),
         conversation_id=conv.id,
         label="主分支",
     )
     db.session.add(branch)
     db.session.commit()
+    _dedupe_main_branches(conv.id)
     return ok(_conv_dict(conv), 201)
 
 
@@ -137,6 +166,7 @@ def delete_conversation(conversation_id: str):
 def list_branches(conversation_id: str):
     if _get_conv(conversation_id) is None:
         return err("NOT_FOUND", "会话不存在", 404)
+    _dedupe_main_branches(conversation_id)
     branches = Branch.query.filter_by(conversation_id=conversation_id).order_by(Branch.created_at).all()
     return ok([_branch_dict(b) for b in branches])
 

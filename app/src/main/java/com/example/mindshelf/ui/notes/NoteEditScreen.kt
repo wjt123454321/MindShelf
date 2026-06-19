@@ -1,5 +1,6 @@
 package com.example.mindshelf.ui.notes
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,8 +20,6 @@ import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,8 +42,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.ui.components.MarkdownEditor
 import com.example.mindshelf.ui.components.MarkdownText
+import com.example.mindshelf.ui.components.MindShelfDropdownMenu
+import com.example.mindshelf.ui.components.MindShelfDropdownMenuItem
 import com.example.mindshelf.ui.components.MindShelfTopAppBar
 import com.example.mindshelf.ui.components.ShareLinkDialog
+import com.example.mindshelf.ui.components.UnsavedChangesDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +67,7 @@ fun NoteEditScreen(
     var kbMenuExpanded by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var showShare by remember { mutableStateOf(false) }
+    var showUnsavedDialog by remember { mutableStateOf(false) }
     var applyingHistory by remember { mutableStateOf(false) }
     var historyRevision by remember { mutableIntStateOf(0) }
     val textHistory = remember(noteId) { NoteTextHistory(NoteSnapshot("", "")) }
@@ -127,6 +130,37 @@ fun NoteEditScreen(
         }
     }
 
+    fun isDirty(): Boolean {
+        if (!isEditing) return false
+        if (isNew) {
+            return title.isNotBlank() || content.isNotBlank() || selectedKbIds.isNotEmpty()
+        }
+        val note = editing ?: return false
+        return title != note.title ||
+            content != note.content ||
+            selectedKbIds != note.knowledgeBaseIds.toSet()
+    }
+
+    fun handleBack() {
+        if (isDirty()) {
+            showUnsavedDialog = true
+        } else {
+            onBack()
+        }
+    }
+
+    BackHandler(enabled = isDirty()) {
+        showUnsavedDialog = true
+    }
+
+    if (showUnsavedDialog) {
+        UnsavedChangesDialog(
+            onSave = { saveNote { showUnsavedDialog = false; onBack() } },
+            onDiscard = { showUnsavedDialog = false; onBack() },
+            onDismiss = { showUnsavedDialog = false },
+        )
+    }
+
     if (showShare && editing != null) {
         ShareLinkDialog(
             onRequestLink = { viewModel.createShareLink(editing!!.id) },
@@ -139,7 +173,7 @@ fun NoteEditScreen(
             MindShelfTopAppBar(
                 title = { Text(if (isNew) "新建笔记" else if (isEditing) "编辑" else "笔记") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = { handleBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
@@ -157,23 +191,15 @@ fun NoteEditScreen(
                                     },
                                 )
                             }
-                            DropdownMenu(
+                            MindShelfDropdownMenu(
                                 expanded = kbMenuExpanded,
                                 onDismissRequest = { kbMenuExpanded = false },
                             ) {
                                 knowledgeBases.forEach { kb ->
                                     val selected = kb.id in selectedKbIds
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                kb.name,
-                                                color = if (selected) {
-                                                    MaterialTheme.colorScheme.primary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurface
-                                                },
-                                            )
-                                        },
+                                    MindShelfDropdownMenuItem(
+                                        text = kb.name,
+                                        selected = selected,
                                         onClick = {
                                             selectedKbIds = if (selected) {
                                                 selectedKbIds - kb.id

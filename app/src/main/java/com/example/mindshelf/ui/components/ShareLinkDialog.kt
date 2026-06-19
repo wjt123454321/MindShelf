@@ -4,9 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,9 +41,9 @@ fun ShareLinkDialog(
             .onFailure { e -> error = e.message; loading = false }
     }
 
-    AlertDialog(
+    MindShelfAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("分享链接") },
+        title = { Text("分享链接", style = MaterialTheme.typography.titleLarge) },
         text = {
             Column {
                 when {

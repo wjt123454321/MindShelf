@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +34,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.data.remote.dto.NoteDto
 import com.example.mindshelf.ui.components.EmptyState
+import com.example.mindshelf.ui.components.MindShelfAlertDialog
 import com.example.mindshelf.ui.components.MindShelfTopAppBar
 import com.example.mindshelf.ui.components.ShareLinkDialog
 import androidx.compose.material.icons.filled.Note
@@ -63,9 +63,9 @@ fun KnowledgeDetailScreen(
     LaunchedEffect(kbId) { viewModel.loadKbNotes(kbId) }
 
     if (showEditDialog) {
-        AlertDialog(
+        MindShelfAlertDialog(
             onDismissRequest = { showEditDialog = false },
-            title = { Text("编辑知识库") },
+            title = { Text("编辑知识库", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column {
                     OutlinedTextField(

@@ -19,12 +19,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -50,9 +47,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.mindshelf.data.remote.dto.KnowledgeBaseDto
 import com.example.mindshelf.ui.components.ConfirmDeleteDialog
-import com.example.mindshelf.ui.components.SwipeDeleteBackground
 import com.example.mindshelf.ui.components.EmptyState
+import com.example.mindshelf.ui.components.MindShelfAlertDialog
+import com.example.mindshelf.ui.components.MindShelfDropdownMenu
+import com.example.mindshelf.ui.components.MindShelfDropdownMenuDivider
+import com.example.mindshelf.ui.components.MindShelfDropdownMenuItem
 import com.example.mindshelf.ui.components.MindShelfTopAppBar
+import com.example.mindshelf.ui.components.SwipeDeleteBackground
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -99,9 +100,9 @@ fun KnowledgeScreen(
     }
 
     editTarget?.let { kb ->
-        AlertDialog(
+        MindShelfAlertDialog(
             onDismissRequest = { editTarget = null },
-            title = { Text("编辑知识库") },
+            title = { Text("编辑知识库", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -137,9 +138,9 @@ fun KnowledgeScreen(
     }
 
     if (showCreateDialog) {
-        AlertDialog(
+        MindShelfAlertDialog(
             onDismissRequest = { showCreateDialog = false },
-            title = { Text("新建知识库") },
+            title = { Text("新建知识库", style = MaterialTheme.typography.titleLarge) },
             text = {
                 OutlinedTextField(
                     value = createName,
@@ -340,12 +341,12 @@ fun KnowledgeScreen(
                                         IconButton(onClick = { menuKbId = kb.id }) {
                                             Icon(Icons.Default.MoreVert, contentDescription = "更多")
                                         }
-                                        DropdownMenu(
+                                        MindShelfDropdownMenu(
                                             expanded = menuKbId == kb.id,
                                             onDismissRequest = { menuKbId = null },
                                         ) {
-                                            DropdownMenuItem(
-                                                text = { Text("编辑") },
+                                            MindShelfDropdownMenuItem(
+                                                text = "编辑",
                                                 onClick = {
                                                     editTarget = kb
                                                     editName = kb.name
@@ -356,8 +357,10 @@ fun KnowledgeScreen(
                                                     Icon(Icons.Default.Edit, contentDescription = null)
                                                 },
                                             )
-                                            DropdownMenuItem(
-                                                text = { Text("删除") },
+                                            MindShelfDropdownMenuDivider()
+                                            MindShelfDropdownMenuItem(
+                                                text = "删除",
+                                                destructive = true,
                                                 onClick = {
                                                     deleteTarget = kb
                                                     menuKbId = null
@@ -366,7 +369,6 @@ fun KnowledgeScreen(
                                                     Icon(
                                                         Icons.Default.Delete,
                                                         contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.error,
                                                     )
                                                 },
                                             )

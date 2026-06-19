@@ -16,7 +16,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -24,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.mindshelf.data.remote.dto.NoteDto
+import com.example.mindshelf.ui.components.MindShelfModalBottomSheet
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -39,7 +39,7 @@ fun SaveToNoteSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val dateFormat = SimpleDateFormat("MM/dd", Locale.getDefault())
 
-    ModalBottomSheet(
+    MindShelfModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {

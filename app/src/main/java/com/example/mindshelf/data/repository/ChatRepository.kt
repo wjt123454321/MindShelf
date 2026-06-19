@@ -11,6 +11,7 @@ import com.example.mindshelf.data.remote.dto.ConversationDto
 import com.example.mindshelf.data.remote.dto.CreateBranchRequest
 import com.example.mindshelf.data.remote.dto.CreateConversationRequest
 import com.example.mindshelf.data.remote.dto.MessageDto
+import com.example.mindshelf.data.chat.BranchDeduplicator
 import com.example.mindshelf.data.chat.buildBranchPathMessages
 import com.example.mindshelf.data.remote.dto.ToolPreview
 import com.example.mindshelf.data.sync.SyncCoordinator
@@ -24,6 +25,7 @@ class ChatRepository @Inject constructor(
     private val api: MindShelfApi,
     private val chatDao: ChatDao,
     private val syncCoordinator: SyncCoordinator,
+    private val branchDeduplicator: BranchDeduplicator,
 ) {
     private val gson = Gson()
 
@@ -69,11 +71,12 @@ class ChatRepository @Inject constructor(
         if (syncCoordinator.shouldWriteRemote()) {
             try {
                 val remote = api.createConversation(
-                    CreateConversationRequest(id = convId, title = title),
+                    CreateConversationRequest(id = convId, title = title, branchId = branchId),
                 ).data
                 val branches = api.listBranches(convId).data
                 chatDao.upsertConversations(listOf(remote.toEntity(SyncStatus.SYNCED)))
                 chatDao.upsertBranches(branches.map { it.toEntity(SyncStatus.SYNCED) })
+                branchDeduplicator.deduplicateMainBranches(convId)
                 return remote
             } catch (_: Exception) {
             }
@@ -107,38 +110,28 @@ class ChatRepository @Inject constructor(
         chatDao.deleteConversation(id)
     }
 
-    suspend fun listBranchesLocal(conversationId: String): List<BranchDto> =
-        chatDao.getBranches(conversationId).map {
+    suspend fun listBranchesLocal(conversationId: String): List<BranchDto> {
+        branchDeduplicator.deduplicateMainBranches(conversationId)
+        return chatDao.getBranches(conversationId).map {
             BranchDto(it.id, it.conversationId, it.label, it.rootMessageId, it.createdAt)
         }
+    }
 
-    suspend fun listBranches(conversationId: String): List<BranchDto> {
-        val local = listBranchesLocal(conversationId)
-        return try {
+    suspend fun listBranches(conversationId: String): List<BranchDto> =
+        try {
             if (syncCoordinator.shouldWriteRemote()) {
                 val remote = api.listBranches(conversationId).data
                 chatDao.upsertBranches(remote.map { it.toEntity(SyncStatus.SYNCED) })
-                mergeBranchLists(local, listBranchesLocal(conversationId))
-            } else {
-                local
             }
+            listBranchesLocal(conversationId)
         } catch (_: Exception) {
-            local
+            listBranchesLocal(conversationId)
         }
-    }
 
     suspend fun getBranchLocal(conversationId: String, branchId: String): BranchDto? =
         chatDao.getBranch(branchId)?.takeIf { it.conversationId == conversationId }?.let {
             BranchDto(it.id, it.conversationId, it.label, it.rootMessageId, it.createdAt)
         }
-
-    private fun mergeBranchLists(vararg lists: List<BranchDto>): List<BranchDto> {
-        val merged = linkedMapOf<String, BranchDto>()
-        lists.forEach { list ->
-            list.forEach { branch -> merged[branch.id] = branch }
-        }
-        return merged.values.sortedBy { it.createdAt }
-    }
 
     suspend fun createBranch(
         conversationId: String,

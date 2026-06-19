@@ -152,6 +152,7 @@ data class MessageDto(
 data class CreateConversationRequest(
     val id: String? = null,
     val title: String = "新对话",
+    @SerializedName("branch_id") val branchId: String? = null,
 )
 
 data class CreateBranchRequest(

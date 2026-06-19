@@ -181,6 +181,24 @@ interface ChatDao {
     @Query("DELETE FROM branches WHERE conversationId = :conversationId")
     suspend fun deleteBranches(conversationId: String)
 
+    @Query("DELETE FROM branches WHERE id = :id")
+    suspend fun deleteBranchById(id: String)
+
+    @Query(
+        "UPDATE messages SET branchId = :newBranchId WHERE conversationId = :conversationId " +
+            "AND branchId = :oldBranchId",
+    )
+    suspend fun reassignMessageBranch(conversationId: String, oldBranchId: String, newBranchId: String)
+
+    @Query(
+        "UPDATE tool_actions SET branchId = :newBranchId WHERE conversationId = :conversationId " +
+            "AND branchId = :oldBranchId",
+    )
+    suspend fun reassignToolActionBranch(conversationId: String, oldBranchId: String, newBranchId: String)
+
+    @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId AND branchId = :branchId")
+    suspend fun countMessagesForBranch(conversationId: String, branchId: String): Int
+
     @Query("DELETE FROM conversations WHERE id = :id")
     suspend fun deleteConversation(id: String)
 
